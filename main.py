@@ -1,109 +1,4 @@
-async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Gestisce i callback dei bottoni"""
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        
-        if data == "main_menu":
-            await self.show_main_menu(query)
-        elif data == "assign_menu":
-            await self.show_assign_menu(query)
-        elif data == "complete_menu":
-            await self.show_complete_menu(query)
-        elif data == "show_leaderboard":
-            await self.show_leaderboard_inline(query)
-        elif data == "show_my_stats":
-            await self.show_stats_inline(query)
-        elif data == "show_my_tasks":
-            await self.show_my_tasks_inline(query)
-        elif data == "show_all_tasks":
-            await self.show_all_tasks_inline(query)
-        elif data == "refresh_menu":
-            await self.refresh_main_menu(query)
-        elif data.startswith("assign_"):
-            task_id = data.replace("assign_", "")
-            await self.show_family_members_for_assignment(query, task_id)
-        elif data.startswith("assign_to_"):
-            parts = data.split("_")
-            task_id = parts[2]
-            user_id = int(parts[3])
-            await self.assign_task_to_user(query, task_id, user_id)
-        elif data.startswith("complete_"):
-            task_id = data.replace("complete_", "")
-            await self.complete_task(query, task_id)
-    
-    async def show_main_menu(self, query):
-        """Mostra il menu principale"""
-        user = query.from_user
-        quick_stats = ""
-        
-        if user.id in db.data['user_stats']:
-            stats = db.data['user_stats'][user.id]
-            quick_stats = f"\n*📊 I tuoi numeri:* Livello {stats['level']} • {stats['total_points']} punti • {stats['streak']} 🔥"
-        
-        main_text = f"""
-🏠 *Family Task Manager*
-
-Benvenuto {user.first_name}! {quick_stats}
-
-Usa i bottoni qui sotto per navigare rapidamente:
-        """
-        
-        inline_keyboard = self.get_quick_actions_inline()
-        
-        await query.edit_message_text(
-            main_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=inline_keyboard
-        )
-    
-    async def refresh_main_menu(self, query):
-        """Aggiorna il menu principale"""
-        await self.show_main_menu(query)
-    
-    async def show_leaderboard_inline(self, query):
-        """Mostra classifica tramite inline"""
-        chat_id = query.message.chat_id
-        leaderboard = db.get_leaderboard(chat_id)
-        
-        if not leaderboard:
-            keyboard = [[InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "👥 *Nessun membro registrato nella famiglia!*",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-            return
-        
-        leaderboard_text = f"*🏆 CLASSIFICA FAMIGLIA ({len(leaderboard)} membri)*\n\n"
-        
-        positions = ["🥇", "🥈", "🥉"]
-        
-        for i, member in enumerate(leaderboard):
-            position = positions[i] if i < 3 else f"{i+1}°"
-            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in member['badges']])
-            
-            leaderboard_text += f"{position} *{member['first_name']}*\n"
-            leaderboard_text += f"⭐ {member['points']} | 📊 Lv.{member['level']} | 🔥 {member['streak']}\n"
-            if badges_str:
-                leaderboard_text += f"🏅 {badges_str}\n"
-            leaderboard_text += "\n"
-        
-        keyboard = [
-            [InlineKeyboardButton("📊 Mie Stats", callback_data="show_my_stats")],
-            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
-            [InlineKeyboardButton("🔄 Aggiorna", callback_data="show_leaderboard")],
-            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(leaderboard_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-    
-    async def show_stats_inline(self, query):
-        """Mostra statistiche tramite inline"""
-        userimport os
+import os
 import json
 import logging
 from datetime import datetime, timedelta
@@ -197,7 +92,7 @@ class FamilyTaskDB:
         self.data['assigned_tasks'][task_key] = {
             'chat_id': chat_id,
             'task_id': task_id,
-            'assigned_to': user_id,
+            'assigned_to': assigned_to,
             'assigned_by': assigned_by,
             'assigned_date': datetime.now().isoformat(),
             'status': 'pending',
@@ -422,21 +317,45 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 })
         
         if not my_tasks:
-            await update.message.reply_text("📝 Non hai attività assegnate al momento!")
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?", 
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
             return
         
-        tasks_text = "*📋 Le Tue Attività:*\n\n"
+        tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
         keyboard = []
         
-        for task in my_tasks:
+        for i, task in enumerate(my_tasks, 1):
             due_str = task['due_date'].strftime("%d/%m")
-            tasks_text += f"{task['task_info']['name']}\n"
-            tasks_text += f"⭐ {task['task_info']['points']} punti | 📅 Scadenza: {due_str}\n\n"
+            days_left = (task['due_date'] - datetime.now()).days
+            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
             
+            tasks_text += f"*{i}. {task['task_info']['name']}*\n"
+            tasks_text += f"⭐ {task['task_info']['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
+            tasks_text += f"⏱️ Tempo stimato: ~{task['task_info']['time_minutes']} minuti\n\n"
+            
+            # Bottone per completare ogni task
+            button_text = f"✅ {task['task_info']['name'][:15]}..."
             keyboard.append([InlineKeyboardButton(
-                f"✅ {task['task_info']['name'][:20]}...", 
+                button_text, 
                 callback_data=f"complete_{task['task_id']}"
             )])
+        
+        # Bottoni azioni aggiuntive
+        keyboard.extend([
+            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
@@ -599,6 +518,109 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
     
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Gestisce i callback dei bottoni"""
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        
+        if data == "main_menu":
+            await self.show_main_menu(query)
+        elif data == "assign_menu":
+            await self.show_assign_menu(query)
+        elif data == "complete_menu":
+            await self.show_complete_menu(query)
+        elif data == "show_leaderboard":
+            await self.show_leaderboard_inline(query)
+        elif data == "show_my_stats":
+            await self.show_stats_inline(query)
+        elif data == "show_my_tasks":
+            await self.show_my_tasks_inline(query)
+        elif data == "show_all_tasks":
+            await self.show_all_tasks_inline(query)
+        elif data == "refresh_menu":
+            await self.refresh_main_menu(query)
+        elif data.startswith("assign_"):
+            task_id = data.replace("assign_", "")
+            await self.show_family_members_for_assignment(query, task_id)
+        elif data.startswith("assign_to_"):
+            parts = data.split("_")
+            task_id = parts[2]
+            user_id = int(parts[3])
+            await self.assign_task_to_user(query, task_id, user_id)
+        elif data.startswith("complete_"):
+            task_id = data.replace("complete_", "")
+            await self.complete_task(query, task_id)
+    
+    async def show_main_menu(self, query):
+        """Mostra il menu principale"""
+        user = query.from_user
+        quick_stats = ""
+        
+        if user.id in db.data['user_stats']:
+            stats = db.data['user_stats'][user.id]
+            quick_stats = f"\n*📊 I tuoi numeri:* Livello {stats['level']} • {stats['total_points']} punti • {stats['streak']} 🔥"
+        
+        main_text = f"""
+🏠 *Family Task Manager*
+
+Benvenuto {user.first_name}! {quick_stats}
+
+Usa i bottoni qui sotto per navigare rapidamente:
+        """
+        
+        inline_keyboard = self.get_quick_actions_inline()
+        
+        await query.edit_message_text(
+            main_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=inline_keyboard
+        )
+    
+    async def refresh_main_menu(self, query):
+        """Aggiorna il menu principale"""
+        await self.show_main_menu(query)
+    
+    async def show_leaderboard_inline(self, query):
+        """Mostra classifica tramite inline"""
+        chat_id = query.message.chat_id
+        leaderboard = db.get_leaderboard(chat_id)
+        
+        if not leaderboard:
+            keyboard = [[InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "👥 *Nessun membro registrato nella famiglia!*",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        
+        leaderboard_text = f"*🏆 CLASSIFICA FAMIGLIA ({len(leaderboard)} membri)*\n\n"
+        
+        positions = ["🥇", "🥈", "🥉"]
+        
+        for i, member in enumerate(leaderboard):
+            position = positions[i] if i < 3 else f"{i+1}°"
+            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in member['badges']])
+            
+            leaderboard_text += f"{position} *{member['first_name']}*\n"
+            leaderboard_text += f"⭐ {member['points']} | 📊 Lv.{member['level']} | 🔥 {member['streak']}\n"
+            if badges_str:
+                leaderboard_text += f"🏅 {badges_str}\n"
+            leaderboard_text += "\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 Mie Stats", callback_data="show_my_stats")],
+            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("🔄 Aggiorna", callback_data="show_leaderboard")],
+            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(leaderboard_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+    
     async def show_stats_inline(self, query):
         """Mostra statistiche tramite inline"""
         user_id = query.from_user.id
@@ -736,6 +758,72 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         
         await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
     
+    async def show_complete_menu(self, query):
+        """Mostra menu per completare task"""
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id
+        
+        # Trova le task dell'utente
+        my_tasks = []
+        for task_key, task_data in db.data['assigned_tasks'].items():
+            if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
+                task_id = task_data['task_id']
+                task_info = db.data['tasks'][task_id]
+                my_tasks.append({
+                    'task_id': task_id,
+                    'task_info': task_info
+                })
+        
+        if not my_tasks:
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                "📝 *Non hai task da completare!*\n\nVuoi assegnarne una?",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        
+        keyboard = []
+        for task in my_tasks:
+            keyboard.append([InlineKeyboardButton(
+                f"✅ {task['task_info']['name']} (⭐{task['task_info']['points']})",
+                callback_data=f"complete_{task['task_id']}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Menu", callback_data="main_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"*✅ Seleziona task da completare ({len(my_tasks)} disponibili):*",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
+    async def show_assign_menu(self, query):
+        """Mostra il menu per assegnare attività"""
+        # Raggruppa task per categoria con bottoni
+        keyboard = [
+            [InlineKeyboardButton("🍽️ Cucina", callback_data="category_cucina")],
+            [InlineKeyboardButton("🧹 Pulizie", callback_data="category_pulizie")],
+            [InlineKeyboardButton("👕 Bucato & Casa", callback_data="category_bucato")],
+            [InlineKeyboardButton("🌱 Esterni & Altro", callback_data="category_esterni")],
+            [InlineKeyboardButton("📋 Tutte le Task", callback_data="assign_all_tasks")],
+            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "*🎯 Seleziona Categoria per Assegnare Task:*\n\n"
+            "Scegli una categoria o visualizza tutte le task disponibili:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Gestisce i messaggi di testo dei bottoni della keyboard"""
         text = update.message.text
@@ -778,26 +866,6 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 "❓ Non ho capito. Usa i bottoni del menu o digita /help per l'aiuto!"
             )
     
-    async def show_assign_menu(self, query):
-        """Mostra il menu per assegnare attività"""
-        # Raggruppa task per categoria con bottoni
-        keyboard = [
-            [InlineKeyboardButton("🍽️ Cucina", callback_data="category_cucina")],
-            [InlineKeyboardButton("🧹 Pulizie", callback_data="category_pulizie")],
-            [InlineKeyboardButton("👕 Bucato & Casa", callback_data="category_bucato")],
-            [InlineKeyboardButton("🌱 Esterni & Altro", callback_data="category_esterni")],
-            [InlineKeyboardButton("📋 Tutte le Task", callback_data="assign_all_tasks")],
-            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
-        ]
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            "*🎯 Seleziona Categoria per Assegnare Task:*\n\n"
-            "Scegli una categoria o visualizza tutte le task disponibili:",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=reply_markup
-        )
-    
     async def show_family_members_for_assignment(self, query, task_id):
         """Mostra i membri famiglia per assegnazione"""
         chat_id = query.message.chat_id
@@ -809,6 +877,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 f"👤 {member['first_name']}",
                 callback_data=f"assign_to_{task_id}_{member['user_id']}"
             )])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
         
         task_name = db.data['tasks'][task_id]['name']
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -834,12 +904,20 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 assigned_to_name = member['first_name']
                 break
         
+        keyboard = [
+            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("🏆 Vedi Classifica", callback_data="show_leaderboard")],
+            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await query.edit_message_text(
             f"✅ *Attività assegnata con successo!*\n\n"
             f"📋 {task_name}\n"
             f"👤 Assegnata a: {assigned_to_name}\n"
             f"📅 Scadenza: {(datetime.now() + timedelta(days=3)).strftime('%d/%m/%Y')}",
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
         )
     
     async def complete_task(self, query, task_id):
@@ -880,6 +958,14 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             if new_badges:
                 badge_text = f"\n🏅 *Nuovo Badge:* {' '.join(new_badges)}"
             
+            keyboard = [
+                [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+                [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")],
+                [InlineKeyboardButton("📋 Altre Mie Task", callback_data="show_my_tasks")],
+                [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 f"🎉 *Attività Completata!*\n\n"
                 f"📋 {task_name}\n"
@@ -887,7 +973,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 f"🔥 Streak: {stats['streak']} giorni"
                 f"{level_up_text}"
                 f"{badge_text}",
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
             )
         else:
             await query.edit_message_text("❌ Attività non trovata o già completata.")
