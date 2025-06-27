@@ -921,6 +921,63 @@ Usa i bottoni qui sotto per navigare rapidamente:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+    
+    async def show_family_members_for_assignment(self, query, task_id):
+        """Mostra i membri famiglia per assegnazione"""
+        chat_id = query.message.chat_id
+        current_user = query.from_user
+        members = db.get_family_members(chat_id)
+        
+        # Verifica che la task esista
+        if task_id not in db.data['tasks']:
+            await query.edit_message_text("❌ Task non trovata!")
+            return
+        
+        keyboard = []
+        
+        # Aggiungi prima "Assegna a me stesso"
+        keyboard.append([InlineKeyboardButton(
+            f"👤 {current_user.first_name} (io)",
+            callback_data=f"assign_to_{task_id}_{current_user.id}"
+        )])
+        
+        # Poi aggiungi gli altri membri della famiglia (escluso l'utente corrente)
+        for member in members:
+            if member['user_id'] != current_user.id:  # Escludi l'utente corrente per evitare duplicati
+                keyboard.append([InlineKeyboardButton(
+                    f"👤 {member['first_name']}",
+                    callback_data=f"assign_to_{task_id}_{member['user_id']}"
+                )])
+        
+        # Se non ci sono altri membri oltre l'utente corrente
+        if len(members) <= 1:
+            keyboard.append([InlineKeyboardButton(
+                "👥 Invita altri membri della famiglia!",
+                callback_data="invite_info"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
+        
+        task_name = db.data['tasks'][task_id]['name']
+        task_points = db.data['tasks'][task_id]['points']
+        task_time = db.data['tasks'][task_id]['time_minutes']
+        
+        assignment_text = f"""
+*👥 Assegna Task:*
+
+📋 *{task_name}*
+⭐ {task_points} punti
+⏱️ ~{task_time} minuti
+
+*Seleziona a chi assegnare:*
+        """
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            assignment_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
         """Gestisce i messaggi di testo dei bottoni della keyboard"""
         text = update.message.text
         
