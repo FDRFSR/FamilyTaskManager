@@ -541,6 +541,11 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             await self.show_all_tasks_inline(query)
         elif data == "refresh_menu":
             await self.refresh_main_menu(query)
+        elif data.startswith("category_"):
+            category = data.replace("category_", "")
+            await self.show_category_tasks(query, category)
+        elif data == "assign_all_tasks":
+            await self.show_all_tasks_for_assignment(query)
         elif data.startswith("assign_"):
             task_id = data.replace("assign_", "")
             await self.show_family_members_for_assignment(query, task_id)
@@ -824,7 +829,85 @@ Usa i bottoni qui sotto per navigare rapidamente:
             reply_markup=reply_markup
         )
     
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def show_category_tasks(self, query, category):
+        """Mostra le task di una categoria specifica per assegnazione"""
+        categories_map = {
+            "cucina": {
+                "name": "🍽️ Cucina",
+                "tasks": ['cucina_pulizia', 'lavastoviglie']
+            },
+            "pulizie": {
+                "name": "🧹 Pulizie", 
+                "tasks": ['bagno_pulizia', 'aspirapolvere', 'pavimenti', 'finestre']
+            },
+            "bucato": {
+                "name": "👕 Bucato & Casa",
+                "tasks": ['bucato', 'stirare', 'letti']
+            },
+            "esterni": {
+                "name": "🌱 Esterni & Altro",
+                "tasks": ['giardino', 'spazzatura', 'spesa']
+            }
+        }
+        
+        if category not in categories_map:
+            await query.edit_message_text("❌ Categoria non trovata")
+            return
+        
+        cat_info = categories_map[category]
+        tasks_text = f"*{cat_info['name']} - Seleziona Task:*\n\n"
+        
+        keyboard = []
+        for task_id in cat_info['tasks']:
+            if task_id in db.data['tasks']:
+                task_data = db.data['tasks'][task_id]
+                tasks_text += f"{task_data['name']}\n⭐ {task_data['points']} punti | ⏱️ ~{task_data['time_minutes']} min\n\n"
+                
+                keyboard.append([InlineKeyboardButton(
+                    f"{task_data['name']} (⭐{task_data['points']})",
+                    callback_data=f"assign_{task_id}"
+                )])
+        
+        keyboard.extend([
+            [InlineKeyboardButton("🔙 Categorie", callback_data="assign_menu")],
+            [InlineKeyboardButton("🏠 Menu", callback_data="main_menu")]
+        ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+    
+    async def show_all_tasks_for_assignment(self, query):
+        """Mostra tutte le task per assegnazione"""
+        tasks_text = "*📋 Tutte le Task - Seleziona da Assegnare:*\n\n"
+        
+        keyboard = []
+        
+        # Organizza per categoria
+        categories = {
+            "🍽️ Cucina": ['cucina_pulizia', 'lavastoviglie'],
+            "🧹 Pulizie": ['bagno_pulizia', 'aspirapolvere', 'pavimenti', 'finestre'],
+            "👕 Bucato": ['bucato', 'stirare', 'letti'],
+            "🌱 Altri": ['giardino', 'spazzatura', 'spesa']
+        }
+        
+        for category_name, task_ids in categories.items():
+            tasks_text += f"*{category_name}*\n"
+            for task_id in task_ids:
+                if task_id in db.data['tasks']:
+                    task_data = db.data['tasks'][task_id]
+                    tasks_text += f"  {task_data['name']} (⭐{task_data['points']})\n"
+                    
+                    # Aggiungi bottone per ogni task
+                    keyboard.append([InlineKeyboardButton(
+                        f"{task_data['name'][:25]}... (⭐{task_data['points']})",
+                        callback_data=f"assign_{task_id}"
+                    )])
+            tasks_text += "\n"
+        
+        keyboard.append([InlineKeyboardButton("🔙 Menu Assegnazione", callback_data="assign_menu")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         """Gestisce i messaggi di testo dei bottoni della keyboard"""
         text = update.message.text
         
@@ -866,7 +949,7 @@ Usa i bottoni qui sotto per navigare rapidamente:
                 "❓ Non ho capito. Usa i bottoni del menu o digita /help per l'aiuto!"
             )
     
-    async def show_family_members_for_assignment(self, query, task_id):
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Mostra i membri famiglia per assegnazione"""
         chat_id = query.message.chat_id
         members = db.get_family_members(chat_id)
