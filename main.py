@@ -551,9 +551,14 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             await self.show_family_members_for_assignment(query, task_id)
         elif data.startswith("assign_to_"):
             parts = data.split("_")
-            task_id = parts[2]
-            user_id = int(parts[3])
-            await self.assign_task_to_user(query, task_id, user_id)
+            if len(parts) >= 4:
+                task_id = parts[2]
+                user_id = int(parts[3])
+                await self.assign_task_to_user(query, task_id, user_id)
+            else:
+                await query.edit_message_text("❌ Errore nell'assegnazione task")
+        elif data == "invite_info":
+            await self.show_invite_info(query)
         elif data.startswith("complete_"):
             task_id = data.replace("complete_", "")
             await self.complete_task(query, task_id)
@@ -976,32 +981,96 @@ Usa i bottoni qui sotto per navigare rapidamente:
         chat_id = query.message.chat_id
         assigned_by = query.from_user.id
         
+        # Verifica che la task esista
+        if task_id not in db.data['tasks']:
+            await query.edit_message_text("❌ Task non trovata!")
+            return
+        
+        # Verifica che non ci sia già una task identica assegnata allo stesso utente
+        task_key = f"{chat_id}_{task_id}_{assigned_to}"
+        if task_key in db.data['assigned_tasks']:
+            await query.edit_message_text(
+                "⚠️ *Task già assegnata!*\n\nQuesta attività è già stata assegnata a questo utente.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Assegna la task
         db.assign_task(chat_id, task_id, assigned_to, assigned_by)
         
-        task_name = db.data['tasks'][task_id]['name']
+        task_data = db.data['tasks'][task_id]
+        task_name = task_data['name']
+        
         # Trova il nome dell'assegnatario
-        members = db.get_family_members(chat_id)
-        assigned_to_name = "Utente"
-        for member in members:
-            if member['user_id'] == assigned_to:
-                assigned_to_name = member['first_name']
-                break
+        assigned_to_name = "Utente sconosciuto"
+        
+        # Controlla se è l'utente stesso
+        if assigned_to == assigned_by:
+            assigned_to_name = f"{query.from_user.first_name} (te stesso)"
+        else:
+            # Cerca nei membri della famiglia
+            members = db.get_family_members(chat_id)
+            for member in members:
+                if member['user_id'] == assigned_to:
+                    assigned_to_name = member['first_name']
+                    break
         
         keyboard = [
             [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("📋 Vedi Task Assegnate", callback_data="show_my_tasks")],
             [InlineKeyboardButton("🏆 Vedi Classifica", callback_data="show_leaderboard")],
             [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        success_text = f"""
+✅ *Task Assegnata con Successo!*
+
+📋 *{task_name}*
+⭐ {task_data['points']} punti
+⏱️ ~{task_data['time_minutes']} minuti
+
+👤 *Assegnata a:* {assigned_to_name}
+📅 *Scadenza:* {(datetime.now() + timedelta(days=3)).strftime('%d/%m/%Y')}
+
+💡 *Suggerimento:* La persona assegnata può completare la task usando "📋 Le Mie Task"
+        """
+        
         await query.edit_message_text(
-            f"✅ *Attività assegnata con successo!*\n\n"
-            f"📋 {task_name}\n"
-            f"👤 Assegnata a: {assigned_to_name}\n"
-            f"📅 Scadenza: {(datetime.now() + timedelta(days=3)).strftime('%d/%m/%Y')}",
+            success_text,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=reply_markup
         )
+    
+    async def show_invite_info(self, query):
+        """Mostra informazioni su come invitare membri famiglia"""
+        bot_username = (await query.bot.get_me()).username
+        invite_text = f"""
+*👥 Invita la Famiglia!*
+
+Per aggiungere membri alla famiglia:
+
+1. **Condividi questo link:**
+   `https://t.me/{bot_username}`
+
+2. **Oppure condividi il nome del bot:**
+   `@{bot_username}`
+
+3. **Ogni membro deve fare:**
+   `/start` nel bot
+
+4. **Automaticamente** appariranno nella classifica e potranno ricevere task!
+
+💡 *Suggerimento:* Più membri = più divertimento e competizione! 🏆
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("🔙 Torna Assegnazione", callback_data="assign_menu")],
+            [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(invite_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
     
     async def complete_task(self, query, task_id):
         """Completa un'attività"""
