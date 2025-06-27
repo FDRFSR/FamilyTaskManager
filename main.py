@@ -1163,6 +1163,25 @@ def main():
     application = Application.builder().token(TOKEN).build()
     bot = FamilyTaskBot()
     
+    # Aggiungi error handler globale
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log di tutti gli errori"""
+        logger.error("Exception while handling an update:", exc_info=context.error)
+        print(f"DEBUG: Errore globale: {context.error}")
+        
+        # Se possibile, informa l'utente
+        if update and hasattr(update, 'effective_chat') and update.effective_chat:
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Si è verificato un errore. Riprova con /start"
+                )
+            except:
+                pass
+    
+    # Registra error handler
+    application.add_error_handler(error_handler)
+    
     # Aggiungi handler
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("tasks", bot.show_tasks))
@@ -1177,6 +1196,7 @@ def main():
     
     # Avvia il bot
     logger.info("🏠 Family Task Bot avviato!")
+    print("DEBUG: Bot in esecuzione...")
     application.run_polling()
 
 if __name__ == '__main__':
