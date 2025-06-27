@@ -1121,17 +1121,20 @@ Usa i bottoni qui sotto per navigare rapidamente:
     
     async def show_invite_info(self, query):
         """Mostra informazioni su come invitare membri famiglia"""
-        bot_username = (await query.bot.get_me()).username
-        invite_text = f"""
+        # Usa il context.bot invece di query.bot 
+        try:
+            # Ottieni il bot dalle informazioni del query
+            bot_username = query.from_user.username or "family_task_bot"  # fallback
+            invite_text = f"""
 *👥 Invita la Famiglia!*
 
 Per aggiungere membri alla famiglia:
 
-1. **Condividi questo link:**
-   `https://t.me/{bot_username}`
+1. **Condividi questo bot:**
+   Cerca `@{bot_username}` su Telegram
 
-2. **Oppure condividi il nome del bot:**
-   `@{bot_username}`
+2. **Oppure condividi il link:**
+   Invia loro questo messaggio per iniziare
 
 3. **Ogni membro deve fare:**
    `/start` nel bot
@@ -1139,7 +1142,20 @@ Per aggiungere membri alla famiglia:
 4. **Automaticamente** appariranno nella classifica e potranno ricevere task!
 
 💡 *Suggerimento:* Più membri = più divertimento e competizione! 🏆
-        """
+            """
+        except:
+            # Fallback se non riusciamo a ottenere il username
+            invite_text = """
+*👥 Invita la Famiglia!*
+
+Per aggiungere membri alla famiglia:
+
+1. **Condividi questo bot**
+2. **Ogni membro deve fare** `/start`
+3. **Automaticamente** appariranno nella classifica!
+
+💡 *Suggerimento:* Più membri = più divertimento! 🏆
+            """
         
         keyboard = [
             [InlineKeyboardButton("🔙 Torna Assegnazione", callback_data="assign_menu")],
