@@ -1,23 +1,383 @@
-await query.edit_message_text(
-            main_text,
+import os
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List
+import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.constants import ParseMode
+
+# Configurazione logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Database simulato (in produzione usa un vero database)
+class FamilyTaskDB:
+    def __init__(self):
+        self.data = {
+            'families': {},
+            'tasks': self.get_default_tasks(),
+            'user_stats': {},
+            'assigned_tasks': {},
+            'completed_tasks': []
+        }
+        self.load_data()
+    
+    def get_default_tasks(self):
+        """Task predefinite con punteggi basati sul tempo medio"""
+        return {
+            'cucina_pulizia': {'name': '🍽️ Pulire la cucina', 'points': 15, 'time_minutes': 30},
+            'bagno_pulizia': {'name': '🚿 Pulire il bagno', 'points': 20, 'time_minutes': 40},
+            'aspirapolvere': {'name': '🧹 Passare l\'aspirapolvere', 'points': 12, 'time_minutes': 25},
+            'lavastoviglie': {'name': '🍴 Caricare/svuotare lavastoviglie', 'points': 8, 'time_minutes': 15},
+            'bucato': {'name': '👕 Fare il bucato', 'points': 10, 'time_minutes': 20},
+            'stirare': {'name': '👔 Stirare', 'points': 18, 'time_minutes': 35},
+            'spazzatura': {'name': '🗑️ Portare fuori la spazzatura', 'points': 5, 'time_minutes': 10},
+            'giardino': {'name': '🌱 Curare il giardino', 'points': 25, 'time_minutes': 50},
+            'spesa': {'name': '🛒 Fare la spesa', 'points': 15, 'time_minutes': 30},
+            'letti': {'name': '🛏️ Rifare i letti', 'points': 6, 'time_minutes': 12},
+            'pavimenti': {'name': '🧽 Lavare i pavimenti', 'points': 20, 'time_minutes': 40},
+            'finestre': {'name': '🪟 Pulire le finestre', 'points': 22, 'time_minutes': 45},
+        }
+    
+    def save_data(self):
+        """Salva i dati (in produzione salva su database)"""
+        pass
+    
+    def load_data(self):
+        """Carica i dati (in produzione carica da database)"""
+        pass
+    
+    def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
+        """Aggiunge un membro alla famiglia"""
+        if chat_id not in self.data['families']:
+            self.data['families'][chat_id] = []
+        
+        # Controlla se l'utente è già nella famiglia
+        for member in self.data['families'][chat_id]:
+            if member['user_id'] == user_id:
+                return False
+        
+        self.data['families'][chat_id].append({
+            'user_id': user_id,
+            'username': username,
+            'first_name': first_name,
+            'joined_date': datetime.now().isoformat()
+        })
+        
+        # Inizializza le statistiche dell'utente
+        if user_id not in self.data['user_stats']:
+            self.data['user_stats'][user_id] = {
+                'total_points': 0,
+                'tasks_completed': 0,
+                'level': 1,
+                'badges': [],
+                'streak': 0,
+                'last_task_date': None
+            }
+        
+        self.save_data()
+        return True
+    
+    def get_family_members(self, chat_id: int):
+        """Ottiene i membri della famiglia"""
+        return self.data['families'].get(chat_id, [])
+    
+    def assign_task(self, chat_id: int, task_id: str, assigned_to: int, assigned_by: int):
+        """Assegna una task"""
+        task_key = f"{chat_id}_{task_id}_{assigned_to}"
+        self.data['assigned_tasks'][task_key] = {
+            'chat_id': chat_id,
+            'task_id': task_id,
+            'assigned_to': assigned_to,
+            'assigned_by': assigned_by,
+            'assigned_date': datetime.now().isoformat(),
+            'status': 'pending',
+            'due_date': (datetime.now() + timedelta(days=3)).isoformat()
+        }
+        self.save_data()
+        print(f"DEBUG: Task assegnata - {task_key}")
+    
+    def complete_task(self, chat_id: int, task_id: str, user_id: int):
+        """Completa una task"""
+        task_key = f"{chat_id}_{task_id}_{user_id}"
+        if task_key in self.data['assigned_tasks']:
+            task_data = self.data['assigned_tasks'][task_key]
+            points = self.data['tasks'][task_id]['points']
+            
+            # Aggiorna statistiche utente
+            if user_id in self.data['user_stats']:
+                stats = self.data['user_stats'][user_id]
+                stats['total_points'] += points
+                stats['tasks_completed'] += 1
+                
+                # Calcola livello (ogni 100 punti = 1 livello)
+                stats['level'] = (stats['total_points'] // 100) + 1
+                
+                # Gestisci streak
+                last_date = stats.get('last_task_date')
+                if last_date:
+                    last_date = datetime.fromisoformat(last_date)
+                    if (datetime.now() - last_date).days == 1:
+                        stats['streak'] += 1
+                    elif (datetime.now() - last_date).days > 1:
+                        stats['streak'] = 1
+                else:
+                    stats['streak'] = 1
+                
+                stats['last_task_date'] = datetime.now().isoformat()
+                
+                # Assegna badge
+                self.check_and_assign_badges(user_id, stats)
+            
+            # Segna come completata
+            self.data['completed_tasks'].append({
+                **task_data,
+                'completed_date': datetime.now().isoformat(),
+                'points_earned': points
+            })
+            
+            # Rimuovi dalle task assegnate
+            del self.data['assigned_tasks'][task_key]
+            self.save_data()
+            return points
+        return 0
+    
+    def check_and_assign_badges(self, user_id: int, stats: dict):
+        """Controlla e assegna badge"""
+        badges = stats.get('badges', [])
+        
+        # Badge per task completate
+        if stats['tasks_completed'] >= 10 and 'rookie' not in badges:
+            badges.append('rookie')
+        if stats['tasks_completed'] >= 50 and 'expert' not in badges:
+            badges.append('expert')
+        if stats['tasks_completed'] >= 100 and 'master' not in badges:
+            badges.append('master')
+        
+        # Badge per streak
+        if stats['streak'] >= 7 and 'week_warrior' not in badges:
+            badges.append('week_warrior')
+        if stats['streak'] >= 30 and 'month_champion' not in badges:
+            badges.append('month_champion')
+        
+        # Badge per punti
+        if stats['total_points'] >= 500 and 'point_collector' not in badges:
+            badges.append('point_collector')
+        
+        stats['badges'] = badges
+    
+    def get_leaderboard(self, chat_id: int):
+        """Ottiene la classifica della famiglia"""
+        family_members = self.get_family_members(chat_id)
+        leaderboard = []
+        
+        for member in family_members:
+            user_id = member['user_id']
+            if user_id in self.data['user_stats']:
+                stats = self.data['user_stats'][user_id]
+                leaderboard.append({
+                    'user_id': user_id,
+                    'first_name': member['first_name'],
+                    'points': stats['total_points'],
+                    'level': stats['level'],
+                    'tasks_completed': stats['tasks_completed'],
+                    'streak': stats['streak'],
+                    'badges': stats['badges']
+                })
+        
+        return sorted(leaderboard, key=lambda x: x['points'], reverse=True)
+
+# Inizializza database
+db = FamilyTaskDB()
+
+class FamilyTaskBot:
+    def __init__(self):
+        self.badge_emojis = {
+            'rookie': '🥉',
+            'expert': '🥈',
+            'master': '🥇',
+            'week_warrior': '⚡',
+            'month_champion': '👑',
+            'point_collector': '💎'
+        }
+    
+    def get_main_menu_keyboard(self):
+        """Crea la tastiera del menu principale"""
+        keyboard = [
+            [KeyboardButton("📋 Le Mie Task"), KeyboardButton("🎯 Assegna Task")],
+            [KeyboardButton("🏆 Classifica"), KeyboardButton("📊 Statistiche")],
+            [KeyboardButton("📚 Tutte le Task"), KeyboardButton("⚙️ Menu")]
+        ]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    
+    def get_quick_actions_inline(self):
+        """Crea bottoni inline per azioni rapide"""
+        keyboard = [
+            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu"),
+             InlineKeyboardButton("✅ Completa Task", callback_data="complete_menu")],
+            [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard"),
+             InlineKeyboardButton("📊 Le Mie Stats", callback_data="show_my_stats")],
+            [InlineKeyboardButton("🔄 Aggiorna Menu", callback_data="refresh_menu")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
+    
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Comando /start"""
+        user = update.effective_user
+        chat_id = update.effective_chat.id
+        
+        # Aggiungi utente alla famiglia
+        added = db.add_family_member(chat_id, user.id, user.username or '', user.first_name)
+        
+        welcome_text = f"""
+🏠 *Benvenuto nel Family Task Manager!*
+
+Ciao {user.first_name}! 👋
+
+Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la tua famiglia!
+
+*🎮 Come funziona:*
+• Assegna compiti ai membri della famiglia
+• Guadagna punti completando le attività
+• Scala la classifica familiare
+• Sblocca badge speciali
+• Mantieni streak giornaliere
+
+*🚀 Usa i bottoni qui sotto per navigare facilmente!*
+        """
+        
+        keyboard = self.get_main_menu_keyboard()
+        inline_keyboard = self.get_quick_actions_inline()
+        
+        await update.message.reply_text(
+            welcome_text, 
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=keyboard
+        )
+        
+        # Invia anche il menu inline per azioni rapide
+        await update.message.reply_text(
+            "*🚀 Menu Rapido - Azioni Principali:*",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=inline_keyboard
         )
     
-    async def refresh_main_menu(self, query):
-        """Aggiorna il menu principale"""
-        await self.show_main_menu(query)
+    async def my_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra le attività assegnate all'utente"""
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        
+        print(f"DEBUG: Cercando task per user_id: {user_id}, chat_id: {chat_id}")
+        print(f"DEBUG: Task assegnate nel database: {list(db.data['assigned_tasks'].keys())}")
+        
+        my_tasks = []
+        for task_key, task_data in db.data['assigned_tasks'].items():
+            print(f"DEBUG: Controllando task_key: {task_key}, assigned_to: {task_data.get('assigned_to')}, chat_id: {task_data.get('chat_id')}")
+            if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
+                task_id = task_data['task_id']
+                if task_id in db.data['tasks']:
+                    task_info = db.data['tasks'][task_id]
+                    due_date = datetime.fromisoformat(task_data['due_date'])
+                    
+                    my_tasks.append({
+                        'task_key': task_key,
+                        'task_info': task_info,
+                        'due_date': due_date,
+                        'task_id': task_id
+                    })
+        
+        print(f"DEBUG: Task trovate per l'utente: {len(my_tasks)}")
+        
+        if not my_tasks:
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?", 
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        
+        tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
+        keyboard = []
+        
+        for i, task in enumerate(my_tasks, 1):
+            due_str = task['due_date'].strftime("%d/%m")
+            days_left = (task['due_date'] - datetime.now()).days
+            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
+            
+            tasks_text += f"*{i}. {task['task_info']['name']}*\n"
+            tasks_text += f"⭐ {task['task_info']['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
+            tasks_text += f"⏱️ Tempo stimato: ~{task['task_info']['time_minutes']} minuti\n\n"
+            
+            # Bottone per completare ogni task
+            button_text = f"✅ {task['task_info']['name'][:15]}..."
+            keyboard.append([InlineKeyboardButton(
+                button_text, 
+                callback_data=f"complete_{task['task_id']}"
+            )])
+        
+        # Bottoni azioni aggiuntive
+        keyboard.extend([
+            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
     
-    async def show_leaderboard_inline(self, query):
-        """Mostra classifica tramite inline"""
-        chat_id = query.message.chat_id
+    async def show_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra tutte le attività disponibili"""
+        tasks_text = "*📋 Attività Disponibili:*\n\n"
+        
+        # Raggruppa le task per categoria
+        categories = {
+            "🍽️ Cucina": ['cucina_pulizia', 'lavastoviglie'],
+            "🧹 Pulizie": ['bagno_pulizia', 'aspirapolvere', 'pavimenti', 'finestre'],
+            "👕 Bucato": ['bucato', 'stirare', 'letti'],
+            "🌱 Esterni": ['giardino', 'spazzatura'],
+            "🛒 Commissioni": ['spesa']
+        }
+        
+        for category, task_ids in categories.items():
+            tasks_text += f"*{category}*\n"
+            for task_id in task_ids:
+                if task_id in db.data['tasks']:
+                    task_data = db.data['tasks'][task_id]
+                    tasks_text += f"  {task_data['name']}\n"
+                    tasks_text += f"  ⭐ {task_data['points']} punti | ⏱️ ~{task_data['time_minutes']} min\n"
+            tasks_text += "\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("🎯 Assegna Attività", callback_data="assign_menu")],
+            [InlineKeyboardButton("✅ Completa Attività", callback_data="complete_menu")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+    
+    async def leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra la classifica famiglia"""
+        chat_id = update.effective_chat.id
         leaderboard = db.get_leaderboard(chat_id)
         
         if not leaderboard:
-            keyboard = [[InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]]
+            keyboard = [
+                [InlineKeyboardButton("👥 Invita Famiglia", callback_data="invite_info")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "👥 *Nessun membro registrato nella famiglia!*",
+            await update.message.reply_text(
+                "👥 *Nessun membro registrato nella famiglia!*\n\nInvita i tuoi familiari a usare il bot con `/start`",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=reply_markup
             )
@@ -32,7 +392,8 @@ await query.edit_message_text(
             badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in member['badges']])
             
             leaderboard_text += f"{position} *{member['first_name']}*\n"
-            leaderboard_text += f"⭐ {member['points']} | 📊 Lv.{member['level']} | 🔥 {member['streak']}\n"
+            leaderboard_text += f"⭐ {member['points']} punti | 📊 Livello {member['level']}\n"
+            leaderboard_text += f"✅ {member['tasks_completed']} task | 🔥 Streak: {member['streak']}\n"
             if badges_str:
                 leaderboard_text += f"🏅 {badges_str}\n"
             leaderboard_text += "\n"
@@ -106,15 +467,16 @@ await query.edit_message_text(
         for task_key, task_data in db.data['assigned_tasks'].items():
             if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
                 task_id = task_data['task_id']
-                task_info = db.data['tasks'][task_id]
-                due_date = datetime.fromisoformat(task_data['due_date'])
-                
-                my_tasks.append({
-                    'task_key': task_key,
-                    'task_info': task_info,
-                    'due_date': due_date,
-                    'task_id': task_id
-                })
+                if task_id in db.data['tasks']:
+                    task_info = db.data['tasks'][task_id]
+                    due_date = datetime.fromisoformat(task_data['due_date'])
+                    
+                    my_tasks.append({
+                        'task_key': task_key,
+                        'task_info': task_info,
+                        'due_date': due_date,
+                        'task_id': task_id
+                    })
         
         if not my_tasks:
             keyboard = [
@@ -194,11 +556,12 @@ await query.edit_message_text(
         for task_key, task_data in db.data['assigned_tasks'].items():
             if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
                 task_id = task_data['task_id']
-                task_info = db.data['tasks'][task_id]
-                my_tasks.append({
-                    'task_id': task_id,
-                    'task_info': task_info
-                })
+                if task_id in db.data['tasks']:
+                    task_info = db.data['tasks'][task_id]
+                    my_tasks.append({
+                        'task_id': task_id,
+                        'task_info': task_info
+                    })
         
         if not my_tasks:
             keyboard = [
@@ -351,7 +714,7 @@ await query.edit_message_text(
         
         # Poi aggiungi gli altri membri della famiglia (escluso l'utente corrente)
         for member in members:
-            if member['user_id'] != current_user.id:  # Escludi l'utente corrente per evitare duplicati
+            if member['user_id'] != current_user.id:
                 keyboard.append([InlineKeyboardButton(
                     f"👤 {member['first_name']}",
                     callback_data=f"assign_to_{task_id}_{member['user_id']}"
@@ -468,7 +831,7 @@ await query.edit_message_text(
     async def show_invite_info(self, query):
         """Mostra informazioni su come invitare membri famiglia"""
         try:
-            bot_username = query.from_user.username or "family_task_bot"  # fallback
+            bot_username = query.from_user.username or "family_task_bot"
             invite_text = f"""
 *👥 Invita la Famiglia!*
 
@@ -658,412 +1021,7 @@ def main():
     application.run_polling()
 
 if __name__ == '__main__':
-    main()
-    import os
-import json
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, List
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telegram.constants import ParseMode
-
-# Configurazione logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Database simulato (in produzione usa un vero database)
-class FamilyTaskDB:
-    def __init__(self):
-        self.data = {
-            'families': {},
-            'tasks': self.get_default_tasks(),
-            'user_stats': {},
-            'assigned_tasks': {},
-            'completed_tasks': []
-        }
-        self.load_data()
-    
-    def get_default_tasks(self):
-        """Task predefinite con punteggi basati sul tempo medio"""
-        return {
-            'cucina_pulizia': {'name': '🍽️ Pulire la cucina', 'points': 15, 'time_minutes': 30},
-            'bagno_pulizia': {'name': '🚿 Pulire il bagno', 'points': 20, 'time_minutes': 40},
-            'aspirapolvere': {'name': '🧹 Passare l\'aspirapolvere', 'points': 12, 'time_minutes': 25},
-            'lavastoviglie': {'name': '🍴 Caricare/svuotare lavastoviglie', 'points': 8, 'time_minutes': 15},
-            'bucato': {'name': '👕 Fare il bucato', 'points': 10, 'time_minutes': 20},
-            'stirare': {'name': '👔 Stirare', 'points': 18, 'time_minutes': 35},
-            'spazzatura': {'name': '🗑️ Portare fuori la spazzatura', 'points': 5, 'time_minutes': 10},
-            'giardino': {'name': '🌱 Curare il giardino', 'points': 25, 'time_minutes': 50},
-            'spesa': {'name': '🛒 Fare la spesa', 'points': 15, 'time_minutes': 30},
-            'letti': {'name': '🛏️ Rifare i letti', 'points': 6, 'time_minutes': 12},
-            'pavimenti': {'name': '🧽 Lavare i pavimenti', 'points': 20, 'time_minutes': 40},
-            'finestre': {'name': '🪟 Pulire le finestre', 'points': 22, 'time_minutes': 45},
-        }
-    
-    def save_data(self):
-        """Salva i dati (in produzione salva su database)"""
-        # In un'app reale, salveresti su database
-        pass
-    
-    def load_data(self):
-        """Carica i dati (in produzione carica da database)"""
-        # In un'app reale, caricheresti da database
-        pass
-    
-    def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
-        """Aggiunge un membro alla famiglia"""
-        if chat_id not in self.data['families']:
-            self.data['families'][chat_id] = []
-        
-        # Controlla se l'utente è già nella famiglia
-        for member in self.data['families'][chat_id]:
-            if member['user_id'] == user_id:
-                return False
-        
-        self.data['families'][chat_id].append({
-            'user_id': user_id,
-            'username': username,
-            'first_name': first_name,
-            'joined_date': datetime.now().isoformat()
-        })
-        
-        # Inizializza le statistiche dell'utente
-        if user_id not in self.data['user_stats']:
-            self.data['user_stats'][user_id] = {
-                'total_points': 0,
-                'tasks_completed': 0,
-                'level': 1,
-                'badges': [],
-                'streak': 0,
-                'last_task_date': None
-            }
-        
-        self.save_data()
-        return True
-    
-    def get_family_members(self, chat_id: int):
-        """Ottiene i membri della famiglia"""
-        return self.data['families'].get(chat_id, [])
-    
-    def assign_task(self, chat_id: int, task_id: str, assigned_to: int, assigned_by: int):
-        """Assegna una task"""
-        task_key = f"{chat_id}_{task_id}_{assigned_to}"
-        self.data['assigned_tasks'][task_key] = {
-            'chat_id': chat_id,
-            'task_id': task_id,
-            'assigned_to': assigned_to,
-            'assigned_by': assigned_by,
-            'assigned_date': datetime.now().isoformat(),
-            'status': 'pending',
-            'due_date': (datetime.now() + timedelta(days=3)).isoformat()
-        }
-        self.save_data()
-        print(f"DEBUG: Task assegnata - {task_key}")  # Debug log
-    
-    def complete_task(self, chat_id: int, task_id: str, user_id: int):
-        """Completa una task"""
-        task_key = f"{chat_id}_{task_id}_{user_id}"
-        if task_key in self.data['assigned_tasks']:
-            task_data = self.data['assigned_tasks'][task_key]
-            points = self.data['tasks'][task_id]['points']
-            
-            # Aggiorna statistiche utente
-            if user_id in self.data['user_stats']:
-                stats = self.data['user_stats'][user_id]
-                stats['total_points'] += points
-                stats['tasks_completed'] += 1
-                
-                # Calcola livello (ogni 100 punti = 1 livello)
-                stats['level'] = (stats['total_points'] // 100) + 1
-                
-                # Gestisci streak
-                last_date = stats.get('last_task_date')
-                if last_date:
-                    last_date = datetime.fromisoformat(last_date)
-                    if (datetime.now() - last_date).days == 1:
-                        stats['streak'] += 1
-                    elif (datetime.now() - last_date).days > 1:
-                        stats['streak'] = 1
-                else:
-                    stats['streak'] = 1
-                
-                stats['last_task_date'] = datetime.now().isoformat()
-                
-                # Assegna badge
-                self.check_and_assign_badges(user_id, stats)
-            
-            # Segna come completata
-            self.data['completed_tasks'].append({
-                **task_data,
-                'completed_date': datetime.now().isoformat(),
-                'points_earned': points
-            })
-            
-            # Rimuovi dalle task assegnate
-            del self.data['assigned_tasks'][task_key]
-            self.save_data()
-            return points
-        return 0
-    
-    def check_and_assign_badges(self, user_id: int, stats: dict):
-        """Controlla e assegna badge"""
-        badges = stats.get('badges', [])
-        
-        # Badge per task completate
-        if stats['tasks_completed'] >= 10 and 'rookie' not in badges:
-            badges.append('rookie')
-        if stats['tasks_completed'] >= 50 and 'expert' not in badges:
-            badges.append('expert')
-        if stats['tasks_completed'] >= 100 and 'master' not in badges:
-            badges.append('master')
-        
-        # Badge per streak
-        if stats['streak'] >= 7 and 'week_warrior' not in badges:
-            badges.append('week_warrior')
-        if stats['streak'] >= 30 and 'month_champion' not in badges:
-            badges.append('month_champion')
-        
-        # Badge per punti
-        if stats['total_points'] >= 500 and 'point_collector' not in badges:
-            badges.append('point_collector')
-        
-        stats['badges'] = badges
-    
-    def get_leaderboard(self, chat_id: int):
-        """Ottiene la classifica della famiglia"""
-        family_members = self.get_family_members(chat_id)
-        leaderboard = []
-        
-        for member in family_members:
-            user_id = member['user_id']
-            if user_id in self.data['user_stats']:
-                stats = self.data['user_stats'][user_id]
-                leaderboard.append({
-                    'user_id': user_id,
-                    'first_name': member['first_name'],
-                    'points': stats['total_points'],
-                    'level': stats['level'],
-                    'tasks_completed': stats['tasks_completed'],
-                    'streak': stats['streak'],
-                    'badges': stats['badges']
-                })
-        
-        return sorted(leaderboard, key=lambda x: x['points'], reverse=True)
-
-# Inizializza database
-db = FamilyTaskDB()
-
-class FamilyTaskBot:
-    def __init__(self):
-        self.badge_emojis = {
-            'rookie': '🥉',
-            'expert': '🥈',
-            'master': '🥇',
-            'week_warrior': '⚡',
-            'month_champion': '👑',
-            'point_collector': '💎'
-        }
-    
-    def get_main_menu_keyboard(self):
-        """Crea la tastiera del menu principale"""
-        keyboard = [
-            [KeyboardButton("📋 Le Mie Task"), KeyboardButton("🎯 Assegna Task")],
-            [KeyboardButton("🏆 Classifica"), KeyboardButton("📊 Statistiche")],
-            [KeyboardButton("📚 Tutte le Task"), KeyboardButton("⚙️ Menu")]
-        ]
-        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    
-    def get_quick_actions_inline(self):
-        """Crea bottoni inline per azioni rapide"""
-        keyboard = [
-            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu"),
-             InlineKeyboardButton("✅ Completa Task", callback_data="complete_menu")],
-            [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard"),
-             InlineKeyboardButton("📊 Le Mie Stats", callback_data="show_my_stats")],
-            [InlineKeyboardButton("🔄 Aggiorna Menu", callback_data="refresh_menu")]
-        ]
-        return InlineKeyboardMarkup(keyboard)
-    
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Comando /start"""
-        user = update.effective_user
-        chat_id = update.effective_chat.id
-        
-        # Aggiungi utente alla famiglia
-        added = db.add_family_member(chat_id, user.id, user.username or '', user.first_name)
-        
-        welcome_text = f"""
-🏠 *Benvenuto nel Family Task Manager!*
-
-Ciao {user.first_name}! 👋
-
-Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la tua famiglia!
-
-*🎮 Come funziona:*
-• Assegna compiti ai membri della famiglia
-• Guadagna punti completando le attività
-• Scala la classifica familiare
-• Sblocca badge speciali
-• Mantieni streak giornaliere
-
-*🚀 Usa i bottoni qui sotto per navigare facilmente!*
-        """
-        
-        keyboard = self.get_main_menu_keyboard()
-        inline_keyboard = self.get_quick_actions_inline()
-        
-        await update.message.reply_text(
-            welcome_text, 
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=keyboard
-        )
-        
-        # Invia anche il menu inline per azioni rapide
-        await update.message.reply_text(
-            "*🚀 Menu Rapido - Azioni Principali:*",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=inline_keyboard
-        )
-    
-    async def show_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mostra tutte le attività disponibili"""
-        tasks_text = "*📋 Attività Disponibili:*\n\n"
-        
-        # Raggruppa le task per categoria
-        categories = {
-            "🍽️ Cucina": ['cucina_pulizia', 'lavastoviglie'],
-            "🧹 Pulizie": ['bagno_pulizia', 'aspirapolvere', 'pavimenti', 'finestre'],
-            "👕 Bucato": ['bucato', 'stirare', 'letti'],
-            "🌱 Esterni": ['giardino', 'spazzatura'],
-            "🛒 Commissioni": ['spesa']
-        }
-        
-        for category, task_ids in categories.items():
-            tasks_text += f"*{category}*\n"
-            for task_id in task_ids:
-                if task_id in db.data['tasks']:
-                    task_data = db.data['tasks'][task_id]
-                    tasks_text += f"  {task_data['name']}\n"
-                    tasks_text += f"  ⭐ {task_data['points']} punti | ⏱️ ~{task_data['time_minutes']} min\n"
-            tasks_text += "\n"
-        
-        keyboard = [
-            [InlineKeyboardButton("🎯 Assegna Attività", callback_data="assign_menu")],
-            [InlineKeyboardButton("✅ Completa Attività", callback_data="complete_menu")],
-            [InlineKeyboardButton("📊 Statistiche Task", callback_data="task_stats")],
-            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-    
-    async def my_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mostra le attività assegnate all'utente"""
-        user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
-        
-        print(f"DEBUG: Cercando task per user_id: {user_id}, chat_id: {chat_id}")
-        print(f"DEBUG: Task assegnate nel database: {list(db.data['assigned_tasks'].keys())}")
-        
-        my_tasks = []
-        for task_key, task_data in db.data['assigned_tasks'].items():
-            print(f"DEBUG: Controllando task_key: {task_key}, assigned_to: {task_data.get('assigned_to')}, chat_id: {task_data.get('chat_id')}")
-            if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
-                task_id = task_data['task_id']
-                if task_id in db.data['tasks']:  # Verifica che la task esista ancora
-                    task_info = db.data['tasks'][task_id]
-                    due_date = datetime.fromisoformat(task_data['due_date'])
-                    
-                    my_tasks.append({
-                        'task_key': task_key,
-                        'task_info': task_info,
-                        'due_date': due_date,
-                        'task_id': task_id
-                    })
-        
-        print(f"DEBUG: Task trovate per l'utente: {len(my_tasks)}")
-        
-        if not my_tasks:
-            keyboard = [
-                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
-                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
-                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(
-                "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?", 
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-            return
-        
-        tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
-        keyboard = []
-        
-        for i, task in enumerate(my_tasks, 1):
-            due_str = task['due_date'].strftime("%d/%m")
-            days_left = (task['due_date'] - datetime.now()).days
-            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
-            
-            tasks_text += f"*{i}. {task['task_info']['name']}*\n"
-            tasks_text += f"⭐ {task['task_info']['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
-            tasks_text += f"⏱️ Tempo stimato: ~{task['task_info']['time_minutes']} minuti\n\n"
-            
-            # Bottone per completare ogni task
-            button_text = f"✅ {task['task_info']['name'][:15]}..."
-            keyboard.append([InlineKeyboardButton(
-                button_text, 
-                callback_data=f"complete_{task['task_id']}"
-            )])
-        
-        # Bottoni azioni aggiuntive
-        keyboard.extend([
-            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
-            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
-            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-        ])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-    
-    async def leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mostra la classifica famiglia"""
-        chat_id = update.effective_chat.id
-        leaderboard = db.get_leaderboard(chat_id)
-        
-        if not leaderboard:
-            keyboard = [
-                [InlineKeyboardButton("👥 Invita Famiglia", callback_data="invite_family")],
-                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "👥 *Nessun membro registrato nella famiglia!*\n\nInvita i tuoi familiari a usare il bot con `/start`",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-            return
-        
-        leaderboard_text = f"*🏆 CLASSIFICA FAMIGLIA ({len(leaderboard)} membri)*\n\n"
-        
-        positions = ["🥇", "🥈", "🥉"]
-        
-        for i, member in enumerate(leaderboard):
-            position = positions[i] if i < 3 else f"{i+1}°"
-            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in member['badges']])
-            
-            leaderboard_text += f"{position} *{member['first_name']}*\n"
-            leaderboard_text += f"⭐ {member['points']} punti | 📊 Livello {member['level']}\n"
-            leaderboard_text += f"✅ {member['tasks_completed']} task | 🔥 Streak: {member['streak']}\n"
-            if badges_str:
-                leaderboard_text += f"🏅 {badges_str}\n"
-            leaderboard_text += "\n"
-        
-        keyboard = [
-            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+    main()ie Statistiche", callback_data="show_my_stats")],
             [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
             [InlineKeyboardButton("🔄 Aggiorna", callback_data="show_leaderboard")],
             [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
@@ -1113,31 +1071,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
 
 🏅 *Badge Ottenuti:*
 {badges_str if badges_str else 'Nessun badge ancora 😢'}
-
-*🎯 Prossimi Obiettivi:*
-"""
-        
-        # Aggiungi obiettivi dinamici
-        objectives = []
-        if stats['tasks_completed'] < 10:
-            objectives.append(f"• Badge Rookie: {10 - stats['tasks_completed']} task")
-        elif stats['tasks_completed'] < 50:
-            objectives.append(f"• Badge Expert: {50 - stats['tasks_completed']} task")
-        elif stats['tasks_completed'] < 100:
-            objectives.append(f"• Badge Master: {100 - stats['tasks_completed']} task")
-        
-        if stats['streak'] < 7:
-            objectives.append(f"• Badge Week Warrior: {7 - stats['streak']} giorni streak")
-        elif stats['streak'] < 30:
-            objectives.append(f"• Badge Month Champion: {30 - stats['streak']} giorni streak")
-        
-        if stats['total_points'] < 500:
-            objectives.append(f"• Badge Point Collector: {500 - stats['total_points']} punti")
-        
-        if not objectives:
-            objectives.append("• 🎉 Hai completato tutti gli obiettivi!")
-        
-        stats_text += "\n".join(objectives)
+        """
         
         keyboard = [
             [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
@@ -1165,8 +1099,6 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
 /start - Inizia e unisciti alla famiglia
 /tasks - Vedi tutte le attività
 /mytasks - Le tue attività assegnate
-/assign - Assegna attività a qualcuno
-/complete - Completa un'attività
 /leaderboard - Classifica famiglia
 /stats - Le tue statistiche personali
 
@@ -1177,12 +1109,6 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
 ⚡ Week Warrior - 7 giorni di streak
 👑 Month Champion - 30 giorni di streak
 💎 Point Collector - 500 punti totali
-
-*💡 Suggerimenti:*
-• Completa attività ogni giorno per mantenere lo streak
-• Le attività più lunghe danno più punti
-• Assegna attività ai membri meno attivi
-• Controlla la classifica per vedere chi è in testa!
         """
         
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
@@ -1247,7 +1173,6 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                     parse_mode=ParseMode.MARKDOWN
                 )
             except:
-                # Se anche questo fallisce, invia nuovo messaggio
                 try:
                     await query.message.reply_text(
                         "❌ *Errore temporaneo*\n\nUsa /start per ricominciare.",
@@ -1275,4 +1200,44 @@ Usa i bottoni qui sotto per navigare rapidamente:
         
         inline_keyboard = self.get_quick_actions_inline()
         
-        await query.edit_
+        await query.edit_message_text(
+            main_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=inline_keyboard
+        )
+    
+    async def refresh_main_menu(self, query):
+        """Aggiorna il menu principale"""
+        await self.show_main_menu(query)
+    
+    async def show_leaderboard_inline(self, query):
+        """Mostra classifica tramite inline"""
+        chat_id = query.message.chat_id
+        leaderboard = db.get_leaderboard(chat_id)
+        
+        if not leaderboard:
+            keyboard = [[InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "👥 *Nessun membro registrato nella famiglia!*",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        
+        leaderboard_text = f"*🏆 CLASSIFICA FAMIGLIA ({len(leaderboard)} membri)*\n\n"
+        
+        positions = ["🥇", "🥈", "🥉"]
+        
+        for i, member in enumerate(leaderboard):
+            position = positions[i] if i < 3 else f"{i+1}°"
+            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in member['badges']])
+            
+            leaderboard_text += f"{position} *{member['first_name']}*\n"
+            leaderboard_text += f"⭐ {member['points']} | 📊 Lv.{member['level']} | 🔥 {member['streak']}\n"
+            if badges_str:
+                leaderboard_text += f"🏅 {badges_str}\n"
+            leaderboard_text += "\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📊 M
