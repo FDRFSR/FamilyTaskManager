@@ -99,6 +99,7 @@ class FamilyTaskDB:
             'due_date': (datetime.now() + timedelta(days=3)).isoformat()
         }
         self.save_data()
+        print(f"DEBUG: Task assegnata - {task_key}")  # Debug log
     
     def complete_task(self, chat_id: int, task_id: str, user_id: int):
         """Completa una task"""
@@ -302,19 +303,26 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         
+        print(f"DEBUG: Cercando task per user_id: {user_id}, chat_id: {chat_id}")
+        print(f"DEBUG: Task assegnate nel database: {list(db.data['assigned_tasks'].keys())}")
+        
         my_tasks = []
         for task_key, task_data in db.data['assigned_tasks'].items():
+            print(f"DEBUG: Controllando task_key: {task_key}, assigned_to: {task_data.get('assigned_to')}, chat_id: {task_data.get('chat_id')}")
             if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
                 task_id = task_data['task_id']
-                task_info = db.data['tasks'][task_id]
-                due_date = datetime.fromisoformat(task_data['due_date'])
-                
-                my_tasks.append({
-                    'task_key': task_key,
-                    'task_info': task_info,
-                    'due_date': due_date,
-                    'task_id': task_id
-                })
+                if task_id in db.data['tasks']:  # Verifica che la task esista ancora
+                    task_info = db.data['tasks'][task_id]
+                    due_date = datetime.fromisoformat(task_data['due_date'])
+                    
+                    my_tasks.append({
+                        'task_key': task_key,
+                        'task_info': task_info,
+                        'due_date': due_date,
+                        'task_id': task_id
+                    })
+        
+        print(f"DEBUG: Task trovate per l'utente: {len(my_tasks)}")
         
         if not my_tasks:
             keyboard = [
@@ -981,9 +989,12 @@ Usa i bottoni qui sotto per navigare rapidamente:
         chat_id = query.message.chat_id
         assigned_by = query.from_user.id
         
+        print(f"DEBUG: Tentativo assegnazione - chat_id: {chat_id}, task_id: {task_id}, assigned_to: {assigned_to}")
+        
         # Verifica che la task esista
         if task_id not in db.data['tasks']:
             await query.edit_message_text("❌ Task non trovata!")
+            print(f"DEBUG: Task {task_id} non trovata in database")
             return
         
         # Verifica che non ci sia già una task identica assegnata allo stesso utente
@@ -993,10 +1004,17 @@ Usa i bottoni qui sotto per navigare rapidamente:
                 "⚠️ *Task già assegnata!*\n\nQuesta attività è già stata assegnata a questo utente.",
                 parse_mode=ParseMode.MARKDOWN
             )
+            print(f"DEBUG: Task già assegnata - {task_key}")
             return
         
         # Assegna la task
-        db.assign_task(chat_id, task_id, assigned_to, assigned_by)
+        try:
+            db.assign_task(chat_id, task_id, assigned_to, assigned_by)
+            print(f"DEBUG: Task assegnata con successo - {task_key}")
+        except Exception as e:
+            print(f"DEBUG: Errore nell'assegnazione: {e}")
+            await query.edit_message_text("❌ Errore nell'assegnazione della task")
+            return
         
         task_data = db.data['tasks'][task_id]
         task_name = task_data['name']
@@ -1034,6 +1052,8 @@ Usa i bottoni qui sotto per navigare rapidamente:
 📅 *Scadenza:* {(datetime.now() + timedelta(days=3)).strftime('%d/%m/%Y')}
 
 💡 *Suggerimento:* La persona assegnata può completare la task usando "📋 Le Mie Task"
+
+🔍 *Debug Info:* Task key: `{task_key}`
         """
         
         await query.edit_message_text(
