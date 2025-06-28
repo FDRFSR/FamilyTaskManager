@@ -4,73 +4,90 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.constants import ParseMode
+import psycopg2
+import psycopg2.extras
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class FamilyTaskDB:
     def __init__(self):
-        self.data = {
-            'families': {},
-            'tasks': self.get_default_tasks(),
-            'user_stats': {},
-            'assigned_tasks': {},
-            'completed_tasks': []
-        }
+        self.conn = psycopg2.connect(os.environ["DATABASE_URL"], cursor_factory=psycopg2.extras.RealDictCursor)
+        self.ensure_tables()
+
+    def ensure_tables(self):
+        with self.conn, self.conn.cursor() as cur:
+            with open(os.path.join(os.path.dirname(__file__), "schema.sql")) as f:
+                cur.execute(f.read())
 
     def get_default_tasks(self):
-        return {
-            'cucina_pulizia': {'name': '🍽️ Pulire la cucina', 'points': 15, 'time_minutes': 30},
-            'bagno_pulizia': {'name': '🚿 Pulire il bagno', 'points': 20, 'time_minutes': 40},
-            'aspirapolvere': {'name': '🧹 Passare l\'aspirapolvere', 'points': 12, 'time_minutes': 25},
-            'lavastoviglie': {'name': '🍴 Caricare/svuotare lavastoviglie', 'points': 8, 'time_minutes': 15},
-            'bucato': {'name': '👕 Fare il bucato', 'points': 10, 'time_minutes': 20},
-            'stirare': {'name': '👔 Stirare', 'points': 18, 'time_minutes': 35},
-            'spazzatura': {'name': '🗑️ Portare fuori la spazzatura', 'points': 5, 'time_minutes': 10},
-            'giardino': {'name': '🌱 Curare il giardino', 'points': 25, 'time_minutes': 50},
-            'spesa': {'name': '🛒 Fare la spesa', 'points': 15, 'time_minutes': 30},
-            'letti': {'name': '🛏️ Rifare i letti', 'points': 6, 'time_minutes': 12},
-            'pavimenti': {'name': '🧽 Lavare i pavimenti', 'points': 20, 'time_minutes': 40},
-            'finestre': {'name': '🪟 Pulire le finestre', 'points': 22, 'time_minutes': 45},
-        }
+        # Carica task di default solo se non esistono, poi restituisce dizionario indicizzato per id
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM tasks;")
+            if cur.fetchone()[0] == 0:
+                default = [
+                    ("cucina_pulizia", "🍽️ Pulire la cucina", 15, 30),
+                    ("bagno_pulizia", "🚿 Pulire il bagno", 20, 40),
+                    ("aspirapolvere", "🧹 Passare l'aspirapolvere", 12, 25),
+                    ("lavastoviglie", "🍴 Caricare/svuotare lavastoviglie", 8, 15),
+                    ("bucato", "👕 Fare il bucato", 10, 20),
+                    ("stirare", "👔 Stirare", 18, 35),
+                    ("spazzatura", "🗑️ Portare fuori la spazzatura", 5, 10),
+                    ("giardino", "🌱 Curare il giardino", 25, 50),
+                    ("spesa", "🛒 Fare la spesa", 15, 30),
+                    ("letti", "🛏️ Rifare i letti", 6, 12),
+                    ("pavimenti", "🧽 Lavare i pavimenti", 20, 40),
+                    ("finestre", "🪟 Pulire le finestre", 22, 45)
+                ]
+                cur.executemany("INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s)", default)
+            cur.execute("SELECT * FROM tasks")
+            return {row['id']: dict(row) for row in cur.fetchall()}
+
+    def get_all_tasks(self):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks")
+            return cur.fetchall()
+
+    def get_task_by_id(self, task_id: str):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            return cur.fetchone()
+
+    def get_assigned_tasks_for_chat(self, chat_id: int):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s", (chat_id,))
+            return cur.fetchall()
+
+    def get_user_assigned_tasks(self, chat_id: int, user_id: int):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT at.task_id, at.due_date, t.name, t.points, t.time_minutes
+                FROM assigned_tasks at
+                JOIN tasks t ON at.task_id = t.id
+                WHERE at.chat_id = %s AND at.assigned_to = %s
+            """, (chat_id, user_id))
+            return cur.fetchall()
 
     def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
-        if chat_id not in self.data['families']:
-            self.data['families'][chat_id] = []
-        for member in self.data['families'][chat_id]:
-            if member['user_id'] == user_id:
-                return False
-        self.data['families'][chat_id].append({
-            'user_id': user_id,
-            'username': username,
-            'first_name': first_name,
-            'joined_date': datetime.now().isoformat()
-        })
-        if user_id not in self.data['user_stats']:
-            self.data['user_stats'][user_id] = {
-                'total_points': 0,
-                'tasks_completed': 0,
-                'level': 1,
-                'badges': [],
-                'streak': 0,
-                'last_task_date': None
-            }
-        return True
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO family_members (chat_id, user_id, username, first_name, joined_date) VALUES (%s, %s, %s, %s, %s)",
+                (chat_id, user_id, username, first_name, datetime.now())
+            )
+            self.conn.commit()
 
     def get_family_members(self, chat_id: int):
-        return self.data['families'].get(chat_id, [])
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM family_members WHERE chat_id = %s", (chat_id,))
+            return cur.fetchall()
 
     def assign_task(self, chat_id: int, task_id: str, assigned_to: int, assigned_by: int):
-        task_key = f"{chat_id}_{task_id}_{assigned_to}"
-        self.data['assigned_tasks'][task_key] = {
-            'chat_id': chat_id,
-            'task_id': task_id,
-            'assigned_to': assigned_to,
-            'assigned_by': assigned_by,
-            'assigned_date': datetime.now().isoformat(),
-            'status': 'pending',
-            'due_date': (datetime.now() + timedelta(days=3)).isoformat()
-        }
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status, due_date) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (chat_id, task_id, assigned_to, assigned_by, datetime.now(), 'pending', datetime.now() + timedelta(days=3))
+            )
+            self.conn.commit()
 
     def check_and_assign_badges(self, user_id: int, stats: dict) -> list:
         badges = stats.get('badges', [])
@@ -97,57 +114,100 @@ class FamilyTaskDB:
         return nuovi
 
     def complete_task(self, chat_id: int, task_id: str, user_id: int):
-        task_key = f"{chat_id}_{task_id}_{user_id}"
-        if task_key in self.data['assigned_tasks']:
-            task_data = self.data['assigned_tasks'][task_key]
-            points = self.data['tasks'][task_id]['points']
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
+            task_data = cur.fetchone()
+            if not task_data:
+                return 0, {"level_up": False, "new_level": None, "new_badges": []}
+            points = task_data['points']
             msg = {"level_up": False, "new_level": None, "new_badges": []}
-            if user_id in self.data['user_stats']:
-                stats = self.data['user_stats'][user_id]
+            cur.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
+            stats = cur.fetchone()
+            if stats:
                 old_level = stats['level']
-                stats['total_points'] += points
-                stats['tasks_completed'] += 1
-                stats['level'] = (stats['total_points'] // 100) + 1
-                if stats['level'] > old_level:
+                new_level = (stats['total_points'] + points) // 100 + 1
+                cur.execute(
+                    "UPDATE user_stats SET total_points = total_points + %s, tasks_completed = tasks_completed + 1, level = %s, last_task_date = %s WHERE user_id = %s",
+                    (points, new_level, datetime.now(), user_id)
+                )
+                if new_level > old_level:
                     msg["level_up"] = True
-                    msg["new_level"] = stats['level']
-                last_date = stats.get('last_task_date')
-                if last_date:
-                    last_date = datetime.fromisoformat(last_date)
-                    if (datetime.now() - last_date).days == 1:
-                        stats['streak'] += 1
-                    elif (datetime.now() - last_date).days > 1:
-                        stats['streak'] = 1
-                else:
-                    stats['streak'] = 1
-                stats['last_task_date'] = datetime.now().isoformat()
-                msg["new_badges"] = self.check_and_assign_badges(user_id, stats)
-            self.data['completed_tasks'].append({
-                **task_data,
-                'completed_date': datetime.now().isoformat(),
-                'points_earned': points
-            })
-            del self.data['assigned_tasks'][task_key]
+                    msg["new_level"] = new_level
+                cur.execute("SELECT * FROM badges WHERE user_id = %s", (user_id,))
+                user_badges = cur.fetchall()
+                badge_names = [b['name'] for b in user_badges]
+                if stats['tasks_completed'] + 1 >= 10 and 'rookie' not in badge_names:
+                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'rookie'))
+                    msg["new_badges"].append('rookie')
+                if stats['tasks_completed'] + 1 >= 50 and 'expert' not in badge_names:
+                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'expert'))
+                    msg["new_badges"].append('expert')
+                if stats['tasks_completed'] + 1 >= 100 and 'master' not in badge_names:
+                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'master'))
+                    msg["new_badges"].append('master')
+                if stats['streak'] + 1 >= 7 and 'week_warrior' not in badge_names:
+                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'week_warrior'))
+                    msg["new_badges"].append('week_warrior')
+                if stats['streak'] + 1 >= 30 and 'month_champion' not in badge_names:
+                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'month_champion'))
+                    msg["new_badges"].append('month_champion')
+                if stats['total_points'] + points >= 500 and 'point_collector' not in badge_names:
+                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'point_collector'))
+                    msg["new_badges"].append('point_collector')
+            cur.execute(
+                "INSERT INTO completed_tasks (chat_id, task_id, assigned_to, completed_date, points_earned) VALUES (%s, %s, %s, %s, %s)",
+                (chat_id, task_id, user_id, datetime.now(), points)
+            )
+            cur.execute("DELETE FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
+            self.conn.commit()
             return points, msg
         return 0, {"level_up": False, "new_level": None, "new_badges": []}
 
     def get_leaderboard(self, chat_id: int):
-        family_members = self.get_family_members(chat_id)
-        leaderboard = []
-        for member in family_members:
-            user_id = member['user_id']
-            if user_id in self.data['user_stats']:
-                stats = self.data['user_stats'][user_id]
-                leaderboard.append({
-                    'user_id': user_id,
-                    'first_name': member['first_name'],
-                    'points': stats['total_points'],
-                    'level': stats['level'],
-                    'tasks_completed': stats['tasks_completed'],
-                    'streak': stats['streak'],
-                    'badges': stats['badges']
-                })
-        return sorted(leaderboard, key=lambda x: x['points'], reverse=True)
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT fm.user_id, fm.first_name, us.total_points, us.level, us.tasks_completed, us.streak
+                FROM family_members fm
+                JOIN user_stats us ON fm.user_id = us.user_id
+                WHERE fm.chat_id = %s
+                ORDER BY us.total_points DESC
+            """, (chat_id,))
+            return cur.fetchall()
+
+    def get_user_assigned_tasks(self, chat_id: int, user_id: int):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT at.task_id, at.due_date, t.name, t.points, t.time_minutes
+                FROM assigned_tasks at
+                JOIN tasks t ON at.task_id = t.id
+                WHERE at.chat_id = %s AND at.assigned_to = %s
+            """, (chat_id, user_id))
+            return cur.fetchall()
+
+    def get_task_by_id(self, task_id: str):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            return cur.fetchone()
+
+    def get_all_tasks(self):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks")
+            return cur.fetchall()
+
+    def get_assigned_tasks_for_chat(self, chat_id: int):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s", (chat_id,))
+            return cur.fetchall()
+
+    def get_user_stats(self, user_id: int):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
+            return cur.fetchone()
+
+    def get_user_badges(self, user_id: int):
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT name FROM badges WHERE user_id = %s", (user_id,))
+            return [row['name'] for row in cur.fetchall()]
 
 db = FamilyTaskDB()
 
@@ -161,6 +221,30 @@ class FamilyTaskBot:
             'month_champion': '👑',
             'point_collector': '💎'
         }
+
+    # Mappa categorie e task
+    TASK_CATEGORIES = {
+        "cucina": {
+            "label": "🍽️ Cucina",
+            "tasks": ["cucina_pulizia", "lavastoviglie"]
+        },
+        "pulizie": {
+            "label": "🧹 Pulizie",
+            "tasks": ["bagno_pulizia", "aspirapolvere", "pavimenti", "finestre"]
+        },
+        "bucato": {
+            "label": "👕 Bucato",
+            "tasks": ["bucato", "stirare", "letti"]
+        },
+        "esterni": {
+            "label": "🌱 Esterni",
+            "tasks": ["giardino", "spazzatura"]
+        },
+        "commissioni": {
+            "label": "🛒 Commissioni",
+            "tasks": ["spesa"]
+        }
+    }
 
     def get_main_menu_keyboard(self):
         keyboard = [
@@ -220,19 +304,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             return
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
-        my_tasks = []
-        for task_key, task_data in db.data['assigned_tasks'].items():
-            if task_data['assigned_to'] == user_id and task_data['chat_id'] == chat_id:
-                task_id = task_data['task_id']
-                if task_id in db.data['tasks']:
-                    task_info = db.data['tasks'][task_id]
-                    due_date = datetime.fromisoformat(task_data['due_date'])
-                    my_tasks.append({
-                        'task_key': task_key,
-                        'task_info': task_info,
-                        'due_date': due_date,
-                        'task_id': task_id
-                    })
+        my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
         if not my_tasks:
             keyboard = [
                 [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
@@ -249,13 +321,13 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
         keyboard = []
         for i, task in enumerate(my_tasks, 1):
-            due_str = task['due_date'].strftime("%d/%m")
-            days_left = (task['due_date'] - datetime.now()).days
+            due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
+            days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
             urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
-            tasks_text += f"*{i}. {task['task_info']['name']}*\n"
-            tasks_text += f"⭐ {task['task_info']['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
-            tasks_text += f"⏱️ Tempo stimato: ~{task['task_info']['time_minutes']} minuti\n\n"
-            button_text = f"✅ {task['task_info']['name'][:15]}..."
+            tasks_text += f"*{i}. {task['name']}*\n"
+            tasks_text += f"⭐ {task['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
+            tasks_text += f"⏱️ Tempo stimato: ~{task['time_minutes']} minuti\n\n"
+            button_text = f"✅ {task['name'][:15]}..."
             keyboard.append([InlineKeyboardButton(
                 button_text,
                 callback_data=f"complete_{task['task_id']}"
@@ -271,21 +343,19 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
     async def show_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message:
             return
+        tasks = db.get_all_tasks()
+        # Organizza le task per categoria
+        cat_map = {k: [] for k in self.TASK_CATEGORIES.keys()}
+        for task in tasks:
+            for catid, cat in self.TASK_CATEGORIES.items():
+                if task['id'] in cat['tasks']:
+                    cat_map[catid].append(task)
         tasks_text = "*📋 Attività Disponibili:*\n\n"
-        categories = {
-            "🍽️ Cucina": ['cucina_pulizia', 'lavastoviglie'],
-            "🧹 Pulizie": ['bagno_pulizia', 'aspirapolvere', 'pavimenti', 'finestre'],
-            "👕 Bucato": ['bucato', 'stirare', 'letti'],
-            "🌱 Esterni": ['giardino', 'spazzatura'],
-            "🛒 Commissioni": ['spesa']
-        }
-        for category, task_ids in categories.items():
-            tasks_text += f"*{category}*\n"
-            for task_id in task_ids:
-                if task_id in db.data['tasks']:
-                    task_data = db.data['tasks'][task_id]
-                    tasks_text += f"  {task_data['name']}\n"
-                    tasks_text += f"  ⭐ {task_data['points']} punti | ⏱️ ~{task_data['time_minutes']} min\n"
+        for catid, cat in self.TASK_CATEGORIES.items():
+            tasks_text += f"*{cat['label']}*\n"
+            for task in cat_map[catid]:
+                tasks_text += f"  {task['name']}\n"
+                tasks_text += f"  ⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min\n"
             tasks_text += "\n"
         keyboard = [
             [InlineKeyboardButton("🎯 Assegna Attività", callback_data="assign_menu")],
@@ -316,9 +386,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         positions = ["🥇", "🥈", "🥉"]
         for i, member in enumerate(leaderboard):
             position = positions[i] if i < 3 else f"{i+1}°"
-            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in member['badges']])
+            badges = db.get_user_badges(member['user_id'])
+            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in badges])
             leaderboard_text += f"{position} *{member['first_name']}*\n"
-            leaderboard_text += f"⭐ {member['points']} punti | 📊 Livello {member['level']}\n"
+            leaderboard_text += f"⭐ {member['total_points']} punti | 📊 Livello {member['level']}\n"
             leaderboard_text += f"✅ {member['tasks_completed']} task | 🔥 Streak: {member['streak']}\n"
             if badges_str:
                 leaderboard_text += f"🏅 {badges_str}\n"
@@ -336,7 +407,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         if not update.message:
             return
         user_id = update.effective_user.id
-        if user_id not in db.data['user_stats']:
+        stats = db.get_user_stats(user_id)
+        if not stats:
             keyboard = [
                 [InlineKeyboardButton("🎯 Assegna Prima Task", callback_data="assign_menu")],
                 [InlineKeyboardButton("📋 Vedi Task Disponibili", callback_data="show_all_tasks")],
@@ -349,8 +421,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 reply_markup=reply_markup
             )
             return
-        stats = db.data['user_stats'][user_id]
-        badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in stats['badges']])
+        badges = db.get_user_badges(user_id)
+        badges_str = " ".join([self.badge_emojis.get(b, "🏅") for b in badges])
         current_level_points = stats['total_points'] % 100
         points_to_next_level = 100 - current_level_points
         progress_bar = "▓" * (current_level_points // 10) + "░" * (10 - (current_level_points // 10))
@@ -409,185 +481,49 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
     async def assign_task_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat_id = update.effective_chat.id
-        tasks = db.data['tasks']
-        assigned = db.data['assigned_tasks']
+        # Mostra solo le categorie come bottoni
+        keyboard = []
+        for catid, cat in self.TASK_CATEGORIES.items():
+            keyboard.append([
+                InlineKeyboardButton(cat["label"], callback_data=f"assign_category_{catid}")
+            ])
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "*Scegli una categoria di task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                "*Scegli una categoria di task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+            )
+
+    async def assign_category_menu(self, query, catid):
+        tasks = db.get_default_tasks()
+        chat_id = query.message.chat.id
+        assigned = db.get_assigned_tasks_for_chat(chat_id)
         members = {m['user_id']: m['first_name'] for m in db.get_family_members(chat_id)}
         assigned_map = {}
-        for v in assigned.values():
-            if v['chat_id'] == chat_id:
-                assigned_map.setdefault(v['task_id'], []).append(members.get(v['assigned_to'], str(v['assigned_to'])))
+        for v in assigned:
+            assigned_map.setdefault(v['task_id'], []).append(members.get(v['assigned_to'], str(v['assigned_to'])))
+        cat = self.TASK_CATEGORIES[catid]
         keyboard = []
-        for task_id, task in tasks.items():
+        for task_id in cat['tasks']:
             if task_id in assigned_map:
                 who = ', '.join(assigned_map[task_id])
-                label = f"{task['name']} ({task['points']} pt) - ASSEGNATA a {who}"
+                label = f"{tasks[task_id]['name']} ({tasks[task_id]['points']} pt) - ASSEGNATA a {who}"
                 keyboard.append([
                     InlineKeyboardButton(label, callback_data="none")
                 ])
             else:
                 keyboard.append([
-                    InlineKeyboardButton(f"{task['name']} ({task['points']} pt)", callback_data=f"choose_task_{task_id}")
-                ])
-        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                "*Seleziona una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
-            )
-        else:
-            await update.message.reply_text(
-                "*Seleziona una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
-            )
-
-    async def choose_assign_target(self, query, task_id):
-        user_id = query.from_user.id
-        chat_id = query.message.chat.id
-        members = db.get_family_members(chat_id)
-        # Ottimizzazione: ordina membri alfabeticamente e metti "A me stesso" in cima
-        keyboard = [[InlineKeyboardButton("A me stesso", callback_data=f"assign_self_{task_id}")]]
-        for member in sorted(members, key=lambda m: m['first_name']):
-            if member['user_id'] != user_id:
-                keyboard.append([
-                    InlineKeyboardButton(f"A {member['first_name']}", callback_data=f"assign_{task_id}_{member['user_id']}")
+                    InlineKeyboardButton(f"{tasks[task_id]['name']} ({tasks[task_id]['points']} pt)", callback_data=f"choose_task_{task_id}")
                 ])
         keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            f"*A chi vuoi assegnare la task?*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+            f"*{cat['label']} - Task disponibili:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
         )
-
-    async def handle_assign(self, query, task_id, target_user_id):
-        chat_id = query.message.chat.id
-        assigned_by = query.from_user.id
-        if any(v['chat_id']==chat_id and v['task_id']==task_id and v['assigned_to']==target_user_id for v in db.data['assigned_tasks'].values()):
-            await query.edit_message_text(
-                f"⚠️ Task già assegnata a questo utente!", parse_mode=ParseMode.MARKDOWN
-            )
-            return
-        db.assign_task(chat_id, task_id, target_user_id, assigned_by)
-        members = db.get_family_members(chat_id)
-        target_name = next((m['first_name'] for m in members if m['user_id'] == target_user_id), "")
-        keyboard = [
-            [InlineKeyboardButton("Assegna un'altra task", callback_data="assign_menu")],
-            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"✅ Task assegnata a {target_name}!", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
-        )
-
-    # 5. Notifiche automatiche: promemoria task in scadenza o in ritardo
-    async def send_task_reminders(self, application):
-        now = datetime.now()
-        for chat_id, members in db.data['families'].items():
-            for task_key, task_data in db.data['assigned_tasks'].items():
-                if task_data['chat_id'] != chat_id:
-                    continue
-                due = datetime.fromisoformat(task_data['due_date'])
-                user_id = task_data['assigned_to']
-                if (due - now).days == 0:
-                    try:
-                        await application.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"⏰ Promemoria: la task '{db.data['tasks'][task_data['task_id']]['name']}' assegnata a {user_id} scade oggi!"
-                        )
-                    except Exception as e:
-                        logger.error(f"Errore invio promemoria: {e}")
-                elif (due - now).days < 0:
-                    try:
-                        await application.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"⚠️ La task '{db.data['tasks'][task_data['task_id']]['name']}' assegnata a {user_id} è in ritardo!"
-                        )
-                    except Exception as e:
-                        logger.error(f"Errore invio promemoria: {e}")
-
-    # 6. Storico delle task completate da ciascun membro
-    async def show_completed_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        completed = [t for t in db.data['completed_tasks'] if t['assigned_to'] == user_id]
-        if not completed:
-            await update.message.reply_text("Non hai ancora completato nessuna task.")
-            return
-        text = "*Storico task completate:*\n"
-        for t in sorted(completed, key=lambda x: x['completed_date'], reverse=True)[:10]:
-            name = db.data['tasks'][t['task_id']]['name']
-            date = datetime.fromisoformat(t['completed_date']).strftime('%d/%m/%Y')
-            text += f"- {name} ({date})\n"
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-
-    # 7. Filtro/ricerca task per nome
-    async def search_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not update.message or not context.args:
-            await update.message.reply_text("Usa: /search <parola chiave>")
-            return
-        query = ' '.join(context.args).lower()
-        tasks = db.data['tasks']
-        found = [t for t in tasks.values() if query in t['name'].lower()]
-        if not found:
-            await update.message.reply_text("Nessuna task trovata.")
-            return
-        text = "*Risultati ricerca:*\n"
-        for t in found:
-            text += f"- {t['name']} ({t['points']} pt)\n"
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-
-    async def show_my_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE = None, query=None):
-        # Permette sia l'uso da comando che da callback
-        if update and update.effective_user:
-            user_id = update.effective_user.id
-            send_func = update.message.reply_text if update.message else None
-        elif query:
-            user_id = query.from_user.id
-            send_func = query.edit_message_text
-        else:
-            return
-        if user_id not in db.data['user_stats']:
-            keyboard = [
-                [InlineKeyboardButton("🎯 Assegna Prima Task", callback_data="assign_menu")],
-                [InlineKeyboardButton("📋 Vedi Task Disponibili", callback_data="show_all_tasks")],
-                [InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            if send_func:
-                await send_func(
-                    "📊 *Non hai ancora statistiche!*\n\nCompleta la prima attività per iniziare a guadagnare punti e vedere le tue stats.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-            return
-        stats = db.data['user_stats'][user_id]
-        badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in stats['badges']])
-        current_level_points = stats['total_points'] % 100
-        points_to_next_level = 100 - current_level_points
-        progress_bar = "▓" * (current_level_points // 10) + "░" * (10 - (current_level_points // 10))
-        stats_text = f"""
-*📊 Le Tue Statistiche*
-
-👤 *Livello:* {stats['level']} 
-⭐ *Punti Totali:* {stats['total_points']}
-✅ *Task Completate:* {stats['tasks_completed']}
-🔥 *Streak Attuale:* {stats['streak']} giorni
-
-*📈 Progresso Livello {stats['level']} → {stats['level'] + 1}:*
-{progress_bar} {current_level_points}/100
-({points_to_next_level} punti al prossimo livello)
-
-🏅 *Badge Ottenuti:*
-{badges_str if badges_str else 'Nessun badge ancora 😢'}
-        """
-        keyboard = [
-            [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
-            [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")],
-            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
-            [InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        if send_func:
-            await send_func(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-        elif query:
-            await query.edit_message_text(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -597,6 +533,9 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             data = query.data
             if data == "assign_menu":
                 await self.assign_task_menu(update, context)
+            elif data.startswith("assign_category_"):
+                catid = data.replace("assign_category_", "")
+                await self.assign_category_menu(query, catid)
             elif data.startswith("choose_task_"):
                 task_id = data.replace("choose_task_", "")
                 await self.choose_assign_target(query, task_id)
@@ -617,11 +556,11 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             elif data == "show_my_stats":
                 await self.show_my_stats(None, None, query=query)
             elif data == "main_menu":
-                keyboard = self.get_main_menu_keyboard()
+                inline_keyboard = self.get_quick_actions_inline()
                 await query.edit_message_text(
                     "*🏠 Menu Principale*\n\nSeleziona un'azione:",
                     parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=keyboard
+                    reply_markup=inline_keyboard
                 )
             else:
                 logger.info(f"Callback non gestito: {data}")
@@ -641,8 +580,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         chat_id = query.message.chat.id  # Funziona per gruppi e privati
         points, msg = db.complete_task(chat_id, task_id, user_id)
         if points > 0:
-            task_name = db.data['tasks'][task_id]['name']
-            stats = db.data['user_stats'][user_id]
+            task = db.get_task_by_id(task_id)
+            stats = db.get_user_stats(user_id)
             level_up_text = ""
             if msg["level_up"]:
                 level_up_text = f"\n🎉 *LEVEL UP!* Ora sei livello {msg['new_level']}!"
@@ -658,7 +597,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 f"🎉 *Attività Completata!*\n\n"
-                f"📋 {task_name}\n"
+                f"📋 {task['name']}\n"
                 f"⭐ +{points} punti\n"
                 f"🔥 Streak: {stats['streak']} giorni"
                 f"{level_up_text}"
@@ -694,6 +633,56 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             await update.message.reply_text(
                 "❓ Non ho capito. Usa i bottoni del menu o digita /help per l'aiuto!"
             )
+
+    async def show_my_stats(self, update, context, query=None):
+        if query:
+            user_id = query.from_user.id
+            send_func = query.edit_message_text
+        else:
+            user_id = update.effective_user.id
+            send_func = update.message.reply_text
+        stats = db.get_user_stats(user_id)
+        if not stats:
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Prima Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📋 Vedi Task Disponibili", callback_data="show_all_tasks")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await send_func(
+                "📊 *Non hai ancora statistiche!*\n\nCompleta la prima attività per iniziare a guadagnare punti e vedere le tue stats.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+        badges = db.get_user_badges(user_id)
+        badges_str = " ".join([self.badge_emojis.get(b, "🏅") for b in badges])
+        current_level_points = stats['total_points'] % 100
+        points_to_next_level = 100 - current_level_points
+        progress_bar = "▓" * (current_level_points // 10) + "░" * (10 - (current_level_points // 10))
+        stats_text = f"""
+*📊 Le Tue Statistiche*
+
+👤 *Livello:* {stats['level']} 
+⭐ *Punti Totali:* {stats['total_points']}
+✅ *Task Completate:* {stats['tasks_completed']}
+🔥 *Streak Attuale:* {stats['streak']} giorni
+
+*📈 Progresso Livello {stats['level']} → {stats['level'] + 1}:*
+{progress_bar} {current_level_points}/100
+({points_to_next_level} punti al prossimo livello)
+
+🏅 *Badge Ottenuti:*
+{badges_str if badges_str else 'Nessun badge ancora 😢'}
+        """
+        keyboard = [
+            [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
+            [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")],
+            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await send_func(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 def main():
     TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
