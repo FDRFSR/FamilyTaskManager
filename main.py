@@ -411,11 +411,24 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
     async def assign_task_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         tasks = db.data['tasks']
+        assigned = db.data['assigned_tasks']
+        members = {m['user_id']: m['first_name'] for m in db.get_family_members(chat_id)}
+        assigned_map = {}
+        for v in assigned.values():
+            if v['chat_id'] == chat_id:
+                assigned_map.setdefault(v['task_id'], []).append(members.get(v['assigned_to'], str(v['assigned_to'])))
         keyboard = []
         for task_id, task in tasks.items():
-            keyboard.append([
-                InlineKeyboardButton(f"{task['name']} ({task['points']} pt)", callback_data=f"choose_task_{task_id}")
-            ])
+            if task_id in assigned_map:
+                who = ', '.join(assigned_map[task_id])
+                label = f"{task['name']} ({task['points']} pt) - ASSEGNATA a {who}"
+                keyboard.append([
+                    InlineKeyboardButton(label, callback_data="none")
+                ])
+            else:
+                keyboard.append([
+                    InlineKeyboardButton(f"{task['name']} ({task['points']} pt)", callback_data=f"choose_task_{task_id}")
+                ])
         keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         if update.callback_query:
@@ -431,10 +444,9 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         user_id = query.from_user.id
         chat_id = query.message.chat.id
         members = db.get_family_members(chat_id)
-        keyboard = [
-            [InlineKeyboardButton("A me stesso", callback_data=f"assign_self_{task_id}")]
-        ]
-        for member in members:
+        # Ottimizzazione: ordina membri alfabeticamente e metti "A me stesso" in cima
+        keyboard = [[InlineKeyboardButton("A me stesso", callback_data=f"assign_self_{task_id}")]]
+        for member in sorted(members, key=lambda m: m['first_name']):
             if member['user_id'] != user_id:
                 keyboard.append([
                     InlineKeyboardButton(f"A {member['first_name']}", callback_data=f"assign_{task_id}_{member['user_id']}")
@@ -448,12 +460,78 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
     async def handle_assign(self, query, task_id, target_user_id):
         chat_id = query.message.chat.id
         assigned_by = query.from_user.id
+        if any(v['chat_id']==chat_id and v['task_id']==task_id and v['assigned_to']==target_user_id for v in db.data['assigned_tasks'].values()):
+            await query.edit_message_text(
+                f"⚠️ Task già assegnata a questo utente!", parse_mode=ParseMode.MARKDOWN
+            )
+            return
         db.assign_task(chat_id, task_id, target_user_id, assigned_by)
         members = db.get_family_members(chat_id)
         target_name = next((m['first_name'] for m in members if m['user_id'] == target_user_id), "")
+        keyboard = [
+            [InlineKeyboardButton("Assegna un'altra task", callback_data="assign_menu")],
+            [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            f"✅ Task assegnata a {target_name}!", parse_mode=ParseMode.MARKDOWN
+            f"✅ Task assegnata a {target_name}!", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
         )
+
+    # 5. Notifiche automatiche: promemoria task in scadenza o in ritardo
+    async def send_task_reminders(self, application):
+        now = datetime.now()
+        for chat_id, members in db.data['families'].items():
+            for task_key, task_data in db.data['assigned_tasks'].items():
+                if task_data['chat_id'] != chat_id:
+                    continue
+                due = datetime.fromisoformat(task_data['due_date'])
+                user_id = task_data['assigned_to']
+                if (due - now).days == 0:
+                    try:
+                        await application.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"⏰ Promemoria: la task '{db.data['tasks'][task_data['task_id']]['name']}' assegnata a {user_id} scade oggi!"
+                        )
+                    except Exception as e:
+                        logger.error(f"Errore invio promemoria: {e}")
+                elif (due - now).days < 0:
+                    try:
+                        await application.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"⚠️ La task '{db.data['tasks'][task_data['task_id']]['name']}' assegnata a {user_id} è in ritardo!"
+                        )
+                    except Exception as e:
+                        logger.error(f"Errore invio promemoria: {e}")
+
+    # 6. Storico delle task completate da ciascun membro
+    async def show_completed_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        completed = [t for t in db.data['completed_tasks'] if t['assigned_to'] == user_id]
+        if not completed:
+            await update.message.reply_text("Non hai ancora completato nessuna task.")
+            return
+        text = "*Storico task completate:*\n"
+        for t in sorted(completed, key=lambda x: x['completed_date'], reverse=True)[:10]:
+            name = db.data['tasks'][t['task_id']]['name']
+            date = datetime.fromisoformat(t['completed_date']).strftime('%d/%m/%Y')
+            text += f"- {name} ({date})\n"
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+    # 7. Filtro/ricerca task per nome
+    async def search_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not context.args:
+            await update.message.reply_text("Usa: /search <parola chiave>")
+            return
+        query = ' '.join(context.args).lower()
+        tasks = db.data['tasks']
+        found = [t for t in tasks.values() if query in t['name'].lower()]
+        if not found:
+            await update.message.reply_text("Nessuna task trovata.")
+            return
+        text = "*Risultati ricerca:*\n"
+        for t in found:
+            text += f"- {t['name']} ({t['points']} pt)\n"
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     # Aggiorna button_handler per gestire i nuovi callback
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -475,6 +553,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 task_id = parts[1]
                 target_user_id = int(parts[2])
                 await self.handle_assign(query, task_id, target_user_id)
+            elif data == "none":
+                await query.answer("Task già assegnata", show_alert=True)
             elif data.startswith("complete_"):
                 task_id = data.replace("complete_", "")
                 logger.info(f"Chiamo complete_task per task_id: {task_id}")
@@ -577,8 +657,13 @@ def main():
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    application.add_handler(CommandHandler("completed", bot.show_completed_tasks))
+    application.add_handler(CommandHandler("search", bot.search_tasks))
     logger.info("🏠 Family Task Bot avviato!")
     application.run_polling()
+    async def reminder_job():
+        await bot.send_task_reminders(application)
+    application.job_queue.run_repeating(lambda ctx: reminder_job(), interval=3600, first=10)
 
 if __name__ == '__main__':
     main()
