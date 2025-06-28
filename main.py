@@ -411,13 +411,16 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         try:
+            logger.info(f"Ricevuto callback_query: {query.data} da utente {query.from_user.id}")
             await query.answer()
             data = query.data
             if data.startswith("complete_"):
                 task_id = data.replace("complete_", "")
+                logger.info(f"Chiamo complete_task per task_id: {task_id}")
                 await self.complete_task(query, task_id)
             # Qui puoi aggiungere tutte le altre azioni inline come vuoi!
             else:
+                logger.info(f"Callback non gestito: {data}")
                 await query.edit_message_text("❓ Azione non ancora implementata")
         except Exception as e:
             logger.error(f"Errore in button_handler: {e}")
