@@ -1862,7 +1862,12 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
 if __name__ == "__main__":
     db = get_db()
     bot = FamilyTaskBot()
-    application = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).build()
+    telegram_token = os.environ.get("TELEGRAM_TOKEN")
+    if not telegram_token:
+        logger.critical("Variabile d'ambiente TELEGRAM_TOKEN mancante. Impossibile avviare il bot.")
+        print("ERRORE: Devi impostare la variabile d'ambiente TELEGRAM_TOKEN con il token del bot Telegram.")
+        exit(1)
+    application = Application.builder().token(telegram_token).build()
 
     # Comandi principali
     application.add_handler(CommandHandler("start", bot.start))
