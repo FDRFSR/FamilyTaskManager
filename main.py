@@ -1141,6 +1141,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
         keyboard = []
         for i, task in enumerate(my_tasks, 1):
+            # Filtro difensivo: salta task None o senza 'task_id'
+            if not task or 'task_id' not in task:
+                logger.warning(f"Task anomala in show_my_tasks_inline: {task}")
+                continue
             due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
             days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
             urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
@@ -1253,6 +1257,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         keyboard = []
         
         for i, task in enumerate(my_tasks, 1):
+            # Filtro difensivo: salta task None o senza 'task_id'
+            if not task or 'task_id' not in task:
+                logger.warning(f"Task anomala in show_complete_menu: {task}")
+                continue
             due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
             days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
             urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
