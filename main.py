@@ -590,6 +590,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 task_id = data.replace("complete_", "")
                 logger.info(f"Chiamo complete_task per task_id: {task_id}")
                 await self.complete_task(query, task_id)
+            elif data == "complete_menu":
+                await self.show_complete_menu(query)
             elif data == "show_my_stats":
                 await self.show_my_stats(None, None, query=query)
             elif data == "show_my_tasks":
@@ -940,6 +942,51 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             [InlineKeyboardButton("✅ Completa Attività", callback_data="complete_menu")],
             [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
         ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
+    async def show_complete_menu(self, query):
+        """Mostra le task assegnate all'utente per completarle"""
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+        my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
+        
+        if not my_tasks:
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "📝 *Non hai attività da completare!*\n\nAssegnati una task per iniziare a guadagnare punti.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+            
+        tasks_text = f"*✅ Completa una delle tue attività ({len(my_tasks)}):*\n\n"
+        keyboard = []
+        
+        for i, task in enumerate(my_tasks, 1):
+            due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
+            days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
+            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
+            
+            tasks_text += f"*{i}. {task['name']}*\n"
+            tasks_text += f"⭐ {task['points']} punti | 📅 {due_str} {urgency}\n\n"
+            
+            button_text = f"✅ {task['name'][:20]}..."
+            keyboard.append([InlineKeyboardButton(
+                button_text,
+                callback_data=f"complete_{task['task_id']}"
+            )])
+            
+        keyboard.extend([
+            [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ])
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
