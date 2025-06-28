@@ -995,16 +995,17 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         cat = self.TASK_CATEGORIES[catid]
         keyboard = []
         for task_id in cat['tasks']:
+            task = tasks.get(task_id)
+            if not task:
+                continue  # Task non trovata, salta
             if task_id in assigned_map:
-                who = ', '.join(assigned_map[task_id])
-                label = f"{tasks[task_id]['name']} ({tasks[task_id]['points']} pt) - ASSEGNATA a {who}"
-                keyboard.append([
-                    InlineKeyboardButton(label, callback_data="none")
-                ])
+                # Mostra a chi è assegnata
+                assigned_to_names = ', '.join(assigned_map[task_id])
+                button_text = f"{task['name']} (a {assigned_to_names})"
+                keyboard.append([InlineKeyboardButton(button_text, callback_data="already_assigned")])
             else:
-                keyboard.append([
-                    InlineKeyboardButton(f"{tasks[task_id]['name']} ({tasks[task_id]['points']} pt)", callback_data=f"choose_task_{task_id}")
-                ])
+                button_text = task['name']
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"assign_task_{task_id}")])
         keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
@@ -1332,8 +1333,8 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             existing_tasks = db.get_assigned_tasks_for_chat(chat_id)
             for assigned in existing_tasks:
                 if assigned.get('task_id') == task_id and assigned.get('assigned_to') == target_user_id:
-                    logger.warning(f"Task {task_id} già assegnata a utente {target_user_id}")
-                    await query.edit_message_text("❌ Questa task è già assegnata a questo utente!")
+                    logger.warning(f"Task {task_id} già assegnata a utente {target_user_id} in chat {chat_id}")
+                    await query.edit_message_text("❌ Task già assegnata a questo utente!")
                     return
             
             # Procedi con l'assegnazione
@@ -1435,7 +1436,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             existing_assignments = db.get_assigned_tasks_for_chat(chat_id)
             already_assigned_to = []
             for assignment in existing_assignments:
-                if assignment.get('task_id') == task_id:
+                if assignment.get('task_id') == task_id and assignment.get('assigned_to') == current_user:
                     already_assigned_to.append(assignment.get('assigned_to'))
             
             keyboard = []
