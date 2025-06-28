@@ -236,8 +236,14 @@ class FamilyTaskDB:
             return cur.fetchall()
 
     def assign_task(self, chat_id: int, task_id: str, assigned_to: int, assigned_by: int):
+        """Assegna una task a un utente con controlli robusti sui duplicati"""
         if self.test_mode:
             key = f"{chat_id}_{task_id}_{assigned_to}"
+            # Controlla se la task è già assegnata in modalità test
+            if key in self.test_data['assigned_tasks']:
+                logger.warning(f"Test mode: Task {task_id} già assegnata a {assigned_to}")
+                raise ValueError(f"Task {task_id} è già assegnata a questo utente")
+                
             self.test_data['assigned_tasks'][key] = {
                 'chat_id': chat_id,
                 'task_id': task_id,
@@ -247,16 +253,39 @@ class FamilyTaskDB:
                 'status': 'pending',
                 'due_date': datetime.now() + timedelta(days=3)
             }
-            logger.info(f"Test mode: Task {task_id} assegnata")
+            logger.info(f"Test mode: Task {task_id} assegnata a {assigned_to}")
             return
             
         self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status, due_date) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (chat_id, task_id, assigned_to, assigned_by, datetime.now(), 'pending', datetime.now() + timedelta(days=3))
-            )
-            self.conn.commit()
+            try:
+                # Controlla se la task è già assegnata allo stesso utente
+                cur.execute("""
+                    SELECT COUNT(*) FROM assigned_tasks 
+                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s
+                """, (chat_id, task_id, assigned_to))
+                
+                if cur.fetchone()[0] > 0:
+                    logger.warning(f"Task {task_id} già assegnata a utente {assigned_to} in chat {chat_id}")
+                    raise ValueError(f"Task {task_id} è già assegnata a questo utente")
+                
+                # Inserisci la nuova assegnazione
+                cur.execute("""
+                    INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status, due_date) 
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (chat_id, task_id, assigned_to, assigned_by, datetime.now(), 'pending', datetime.now() + timedelta(days=3)))
+                
+                self.conn.commit()
+                logger.info(f"Task {task_id} assegnata con successo a utente {assigned_to} in chat {chat_id}")
+                
+            except psycopg2.IntegrityError as e:
+                self.conn.rollback()
+                logger.error(f"Errore di integrità nell'assegnazione task: {e}")
+                raise ValueError(f"Impossibile assegnare la task: violazione di integrità")
+            except Exception as e:
+                self.conn.rollback()
+                logger.error(f"Errore nell'assegnazione task {task_id}: {e}")
+                raise
 
     def check_and_assign_badges(self, user_id: int, stats: dict) -> list:
         badges = stats.get('badges', [])
@@ -815,13 +844,26 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 await self.choose_assign_target(query, task_id)
             elif data.startswith("assign_self_"):
                 task_id = data.replace("assign_self_", "")
+                logger.info(f"Callback assign_self per task: {task_id}")
                 await self.handle_assign(query, task_id, query.from_user.id)
             elif data.startswith("assign_"):
                 parts = data.split("_")
+                logger.info(f"Callback assign con parti: {parts}")
                 if len(parts) >= 3:
-                    task_id = parts[1]
-                    target_user_id = int(parts[2])
-                    await self.handle_assign(query, task_id, target_user_id)
+                    try:
+                        task_id = parts[1]
+                        target_user_id = int(parts[2])
+                        logger.info(f"Assegnazione task {task_id} a utente {target_user_id}")
+                        await self.handle_assign(query, task_id, target_user_id)
+                    except ValueError as e:
+                        logger.error(f"Errore nel parsing user_id da callback {data}: {e}")
+                        await query.edit_message_text("❌ Errore nel formato del comando. Riprova.")
+                    except Exception as e:
+                        logger.error(f"Errore generico nel callback assign: {e}")
+                        await query.edit_message_text("❌ Errore nell'assegnazione. Riprova.")
+                else:
+                    logger.error(f"Callback assign malformato: {data}")
+                    await query.edit_message_text("❌ Comando malformato. Riprova.")
             elif data == "none":
                 await query.answer("Task già assegnata", show_alert=True)
             elif data.startswith("complete_"):
@@ -1038,77 +1080,222 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         await send_func(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def handle_assign(self, query, task_id, target_user_id):
-        """Gestisce l'assegnazione effettiva della task"""
+        """Gestisce l'assegnazione effettiva della task con controlli robusti"""
         chat_id = query.message.chat.id
         assigned_by = query.from_user.id
+        
         try:
-            # Verifica se la task è già assegnata allo stesso utente
-            existing = db.get_assigned_tasks_for_chat(chat_id)
-            for assigned in existing:
-                if assigned.get('task_id') == task_id and assigned.get('assigned_to') == target_user_id:
-                    await query.edit_message_text("❌ Questa task è già assegnata a questo utente!")
-                    return
-            # Assegna la task
-            db.assign_task(chat_id, task_id, target_user_id, assigned_by)
-            # Ottieni informazioni per la conferma
+            logger.info(f"Iniziando assegnazione task {task_id} a utente {target_user_id} in chat {chat_id}")
+            
+            # Verifica che la task esista
             task = db.get_task_by_id(task_id)
             if not task:
-                await query.edit_message_text("❌ Task non trovata!")
+                logger.error(f"Task {task_id} non trovata nel database")
+                await query.edit_message_text("❌ Task non trovata nel sistema!")
                 return
-            # Trova il nome del destinatario
+            
+            # Verifica che l'utente destinatario sia membro della famiglia
+            members = db.get_family_members(chat_id)
+            target_member = next((m for m in members if m['user_id'] == target_user_id), None)
+            
+            if not target_member and target_user_id != assigned_by:
+                logger.error(f"Utente {target_user_id} non è membro della famiglia in chat {chat_id}")
+                await query.edit_message_text("❌ L'utente non è membro della famiglia!")
+                return
+            
+            # Verifica se la task è già assegnata allo stesso utente
+            existing_tasks = db.get_assigned_tasks_for_chat(chat_id)
+            for assigned in existing_tasks:
+                if assigned.get('task_id') == task_id and assigned.get('assigned_to') == target_user_id:
+                    logger.warning(f"Task {task_id} già assegnata a utente {target_user_id}")
+                    await query.edit_message_text("❌ Questa task è già assegnata a questo utente!")
+                    return
+            
+            # Procedi con l'assegnazione
+            logger.info(f"Assegnando task {task_id} a utente {target_user_id}")
+            try:
+                db.assign_task(chat_id, task_id, target_user_id, assigned_by)
+            except ValueError as ve:
+                # Gestisce il caso in cui la task è già assegnata (dal controllo nel DB)
+                logger.warning(f"Tentativo di assegnazione duplicata: {ve}")
+                await query.edit_message_text(f"❌ {str(ve)}")
+                return
+            except Exception as db_error:
+                logger.error(f"Errore del database nell'assegnazione: {db_error}")
+                await query.edit_message_text("❌ Errore del database durante l'assegnazione. Riprova.")
+                return
+            
+            # Determina il nome del destinatario per il messaggio di conferma
             if target_user_id == assigned_by:
                 target_name = "te stesso"
             else:
-                members = db.get_family_members(chat_id)
-                target_name = next((m['first_name'] for m in members if m['user_id'] == target_user_id), str(target_user_id))
+                target_name = target_member['first_name'] if target_member else f"Utente {target_user_id}"
+            
+            # Prepara il messaggio di successo
             keyboard = [
                 [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
                 [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            success_message = (
+                f"✅ *Task Assegnata con Successo!*\n\n"
+                f"📋 **{task['name']}**\n"
+                f"👤 **Assegnata a:** {target_name}\n"
+                f"⭐ **Punti:** {task['points']}\n"
+                f"⏱️ **Tempo stimato:** ~{task['time_minutes']} minuti\n"
+                f"📅 **Scadenza:** 3 giorni\n\n"
+                f"💡 *La task è ora visibile nelle attività dell'utente!*"
+            )
+            
             await query.edit_message_text(
-                f"✅ *Task Assegnata!*\n\n"
-                f"📋 {task['name']}\n"
-                f"👤 Assegnata a: {target_name}\n"
-                f"⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min\n"
-                f"📅 Scadenza: 3 giorni",
+                success_message,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=reply_markup
             )
+            
+            logger.info(f"Task {task_id} assegnata con successo a {target_user_id}")
+            
         except Exception as e:
-            logger.error(f"Errore nell'assegnazione task: {e}", exc_info=True)
-            await query.edit_message_text("❌ Errore nell'assegnazione della task. Riprova.")
+            logger.error(f"Errore nell'assegnazione task {task_id} a {target_user_id}: {e}", exc_info=True)
+            try:
+                await query.edit_message_text(
+                    "❌ *Errore nell'Assegnazione*\n\n"
+                    "Si è verificato un problema durante l'assegnazione della task. "
+                    "Verifica che tutti i dati siano corretti e riprova.\n\n"
+                    "Se il problema persiste, riavvia il bot con /start",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e2:
+                logger.error(f"Errore secondario in handle_assign: {e2}")
+                # Tentativo di fallback con messaggio semplice
+                try:
+                    await query.answer("❌ Errore nell'assegnazione task", show_alert=True)
+                except Exception as e3:
+                    logger.critical(f"Errore critico in handle_assign: {e3}")
 
     async def choose_assign_target(self, query, task_id):
-        """Mostra i membri della famiglia per scegliere a chi assegnare la task"""
+        """Mostra i membri della famiglia per scegliere a chi assegnare la task con controlli robusti"""
         chat_id = query.message.chat.id
-        members = db.get_family_members(chat_id)
-        task = db.get_task_by_id(task_id)
-        if not task:
-            await query.edit_message_text("❌ Task non trovata!")
-            return
-        keyboard = []
-        # Opzione per assegnare a se stesso
-        keyboard.append([
-            InlineKeyboardButton(f"🫵 Assegna a me", callback_data=f"assign_self_{task_id}")
-        ])
-        # Opzioni per assegnare ad altri membri
-        for member in members:
-            if member['user_id'] != query.from_user.id:
+        current_user = query.from_user.id
+        
+        try:
+            logger.info(f"Aprendo menu scelta destinatario per task {task_id} in chat {chat_id}")
+            
+            # Verifica che la task esista
+            task = db.get_task_by_id(task_id)
+            if not task:
+                logger.error(f"Task {task_id} non trovata")
+                await query.edit_message_text("❌ Task non trovata nel sistema!")
+                return
+            
+            # Ottieni i membri della famiglia
+            members = db.get_family_members(chat_id)
+            logger.info(f"Trovati {len(members)} membri nella famiglia chat {chat_id}")
+            
+            if not members:
+                # Se non ci sono membri, aggiungi almeno l'utente corrente
+                logger.warning(f"Nessun membro famiglia trovato, aggiungendo utente corrente {current_user}")
+                current_user_info = query.from_user
+                db.add_family_member(
+                    chat_id, 
+                    current_user_info.id, 
+                    current_user_info.username or '', 
+                    current_user_info.first_name or 'Utente'
+                )
+                members = db.get_family_members(chat_id)
+            
+            # Verifica se la task è già assegnata
+            existing_assignments = db.get_assigned_tasks_for_chat(chat_id)
+            already_assigned_to = []
+            for assignment in existing_assignments:
+                if assignment.get('task_id') == task_id:
+                    already_assigned_to.append(assignment.get('assigned_to'))
+            
+            keyboard = []
+            
+            # Opzione per assegnare a se stesso (se non già assegnata)
+            if current_user not in already_assigned_to:
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"👤 {member['first_name']}",
-                        callback_data=f"assign_{task_id}_{member['user_id']}"
+                        f"🫵 Assegna a me", 
+                        callback_data=f"assign_self_{task_id}"
                     )
                 ])
-        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"*A chi vuoi assegnare:*\n\n📋 {task['name']}\n⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=reply_markup
-        )
+            
+            # Opzioni per assegnare ad altri membri (se non già assegnate)
+            for member in members:
+                user_id = member['user_id']
+                if user_id != current_user and user_id not in already_assigned_to:
+                    first_name = member.get('first_name', f'Utente {user_id}')
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"👤 {first_name}",
+                            callback_data=f"assign_{task_id}_{user_id}"
+                        )
+                    ])
+            
+            # Mostra utenti a cui la task è già assegnata (informativi, non cliccabili)
+            if already_assigned_to:
+                for member in members:
+                    if member['user_id'] in already_assigned_to:
+                        first_name = member.get('first_name', f'Utente {member["user_id"]}')
+                        keyboard.append([
+                            InlineKeyboardButton(
+                                f"✅ {first_name} (già assegnata)",
+                                callback_data="none"
+                            )
+                        ])
+            
+            # Se nessuno è disponibile per l'assegnazione
+            if not any(btn for row in keyboard for btn in row if btn.callback_data != "none"):
+                keyboard = [
+                    [InlineKeyboardButton(
+                        "ℹ️ Task già assegnata a tutti",
+                        callback_data="none"
+                    )]
+                ]
+            
+            # Bottoni di navigazione
+            keyboard.extend([
+                [InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")],
+                [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
+            ])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            message_text = (
+                f"*🎯 A chi vuoi assegnare:*\n\n"
+                f"📋 **{task['name']}**\n"
+                f"⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} minuti\n\n"
+                f"👥 *Scegli un membro della famiglia:*"
+            )
+            
+            await query.edit_message_text(
+                message_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            
+            logger.info(f"Menu scelta destinatario mostrato per task {task_id}")
+            
+        except Exception as e:
+            logger.error(f"Errore in choose_assign_target per task {task_id}: {e}", exc_info=True)
+            try:
+                await query.edit_message_text(
+                    "❌ *Errore nella Selezione*\n\n"
+                    "Si è verificato un problema nel mostrare i membri della famiglia. "
+                    "Verifica di aver fatto /start e riprova.\n\n"
+                    "Se il problema persiste, riavvia il bot con /start",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e2:
+                logger.error(f"Errore secondario in choose_assign_target: {e2}")
+                try:
+                    await query.answer("❌ Errore nel caricamento membri famiglia", show_alert=True)
+                except Exception as e3:
+                    logger.critical(f"Errore critico in choose_assign_target: {e3}")
 
     async def send_task_reminders(self, application):
         """Invia promemoria per le task in scadenza"""
