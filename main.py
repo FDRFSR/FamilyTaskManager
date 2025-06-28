@@ -180,11 +180,18 @@ class FamilyTaskDB:
             if not self.test_data['tasks']:
                 self.get_default_tasks()
             return self.test_data['tasks'].get(task_id)
-            
+        
         self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-            return cur.fetchone()
+            task = cur.fetchone()
+            if not task:
+                # Logging dettagliato: task non trovata, mostra tutti gli id presenti
+                cur.execute("SELECT id FROM tasks")
+                all_ids = [row['id'] for row in cur.fetchall()]
+                logging.error(f"Task non trovata: {task_id}. Id presenti: {all_ids}")
+                # Suggerisci rigenerazione se mancante
+            return task
 
     def get_assigned_tasks_for_chat(self, chat_id: int):
         if self.test_mode:
@@ -1424,7 +1431,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 )
                 members = db.get_family_members(chat_id)
             
-            # Verifica se la task è già assegnata
+            # Verifica se la task è già assegnata allo stesso utente
             existing_assignments = db.get_assigned_tasks_for_chat(chat_id)
             already_assigned_to = []
             for assignment in existing_assignments:
