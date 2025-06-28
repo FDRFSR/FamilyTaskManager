@@ -189,8 +189,16 @@ class FamilyTaskDB:
                 # Logging dettagliato: task non trovata, mostra tutti gli id presenti
                 cur.execute("SELECT id FROM tasks")
                 all_ids = [row['id'] for row in cur.fetchall()]
-                logging.error(f"Task non trovata: {task_id}. Id presenti: {all_ids}")
-                # Suggerisci rigenerazione se mancante
+                logging.error(f"Task non trovata: {task_id}. Id presenti: {all_ids}. Provo a rigenerare le task di default.")
+                # Prova a popolare le task di default e riprova una sola volta
+                self.get_default_tasks()
+                cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+                task = cur.fetchone()
+                if not task:
+                    cur.execute("SELECT id FROM tasks")
+                    all_ids = [row['id'] for row in cur.fetchall()]
+                    logging.error(f"Task ancora non trovata dopo rigenerazione: {task_id}. Id ora presenti: {all_ids}")
+                    return None
             return task
 
     def get_assigned_tasks_for_chat(self, chat_id: int):
@@ -1850,111 +1858,3 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 )
             except Exception as e2:
                 logger.critical(f"Errore critico nel fallback di show_complete_menu: {e2}")
-
-def main():
-    TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    if not TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN non trovato!")
-        logger.info("Per testare il bot, imposta le variabili d'ambiente nel file .env")
-        logger.info("Modalità demo: mostra solo le funzionalità principali")
-        
-        # Test delle funzionalità principali
-        print("\n🏠 Family Task Manager - Test delle Funzionalità\n")
-        
-        # Test del database
-        test_db = FamilyTaskDB()
-        
-        print("✅ Database inizializzato in modalità test")
-        print(f"✅ {len(test_db.get_all_tasks())} task caricate")
-        
-        # Test aggiunta membro famiglia
-        test_db.add_family_member(123456, 789012, "testuser", "Mario")
-        members = test_db.get_family_members(123456)
-        print(f"✅ {len(members)} membri famiglia aggiunti")
-        
-        # Test assegnazione task
-        test_db.assign_task(123456, "cucina_pulizia", 789012, 789012)
-        assigned = test_db.get_assigned_tasks_for_chat(123456)
-        print(f"✅ {len(assigned)} task assegnate")
-        
-        # Test completamento task
-        points, msg = test_db.complete_task(123456, "cucina_pulizia", 789012)
-        print(f"✅ Task completata: {points} punti guadagnati")
-        
-        # Test leaderboard
-        leaderboard = test_db.get_leaderboard(123456)
-        print(f"✅ Leaderboard: {len(leaderboard)} utenti")
-        
-        # Test specifico per KeyError (la parte che ci interessava)
-        print("\n🔍 Test specifico anti-KeyError:")
-        
-        # Aggiungi un'altra task e testala
-        test_db.assign_task(123456, "bagno_pulizia", 789012, 789012)
-        user_tasks = test_db.get_user_assigned_tasks(123456, 789012)
-        print(f"✅ {len(user_tasks)} task recuperate per l'utente")
-        
-        # Verifica che ogni task abbia tutte le chiavi necessarie
-        for i, task in enumerate(user_tasks):
-            required_keys = ['task_id', 'name', 'points', 'time_minutes']
-            for key in required_keys:
-                if key not in task:
-                    print(f"❌ ERRORE: Chiave '{key}' mancante nella task {i+1}")
-                    return
-            print(f"✅ Task {i+1}: {task['task_id']} - {task['name']} ({task['points']} pt)")
-        
-        print("\n🎉 Tutti i test principali completati con successo!")
-        print("📊 Il KeyError nelle task è stato RISOLTO definitivamente!")
-        print("Per usare il bot con Telegram, configura TELEGRAM_BOT_TOKEN nel file .env")
-        return
-        
-    # Modalità normale con bot Telegram
-    try:
-        global db
-        db = FamilyTaskDB()
-        application = Application.builder().token(TOKEN).build()
-        bot = FamilyTaskBot()
-        
-        async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-            logger.error("Exception while handling an update:", exc_info=context.error)
-            if update and hasattr(update, 'effective_chat') and update.effective_chat:
-                try:
-                    await context.bot.send_message(
-                        chat_id=update.effective_chat.id,
-                        text="❌ Si è verificato un errore. Riprova con /start"
-                    )
-                except Exception as e:
-                    logger.error(f"Errore nell'invio del messaggio di errore: {e}")
-        
-        async def reminder_job(context):
-            await bot.send_task_reminders(context.application)
-        
-        application.add_error_handler(error_handler)
-        application.add_handler(CommandHandler("start", bot.start))
-        application.add_handler(CommandHandler("tasks", bot.show_tasks))
-        application.add_handler(CommandHandler("mytasks", bot.my_tasks))
-        application.add_handler(CommandHandler("leaderboard", bot.leaderboard))
-        application.add_handler(CommandHandler("stats", bot.stats))
-        application.add_handler(CommandHandler("help", bot.help_command))
-        application.add_handler(CallbackQueryHandler(bot.button_handler))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
-        
-        # Aggiungi job per i promemoria (ogni ora) solo se JobQueue è disponibile
-        try:
-            if application.job_queue:
-                application.job_queue.run_repeating(reminder_job, interval=3600, first=10)
-                logger.info("JobQueue configurato per i promemoria")
-            else:
-                logger.warning("JobQueue non disponibile - promemoria disabilitati")
-        except Exception as e:
-            logger.warning(f"Errore nell'impostazione JobQueue: {e}")
-        
-        logger.info("🏠 Family Task Bot avviato!")
-        application.run_polling()
-        
-    except Exception as e:
-        logger.error(f"Errore nell'avvio del bot Telegram: {e}")
-        print(f"❌ Errore nell'avvio del bot: {e}")
-        print("Verifica la configurazione del token e le dipendenze.")
-
-if __name__ == '__main__':
-    main()
