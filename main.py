@@ -1042,10 +1042,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         chat_id = query.message.chat.id
         assigned_by = query.from_user.id
         try:
-            # Verifica se la task è già assegnata
+            # Verifica se la task è già assegnata allo stesso utente
             existing = db.get_assigned_tasks_for_chat(chat_id)
             for assigned in existing:
-                if assigned['task_id'] == task_id and assigned['assigned_to'] == target_user_id:
+                if assigned.get('task_id') == task_id and assigned.get('assigned_to') == target_user_id:
                     await query.edit_message_text("❌ Questa task è già assegnata a questo utente!")
                     return
             # Assegna la task
@@ -1055,14 +1055,12 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             if not task:
                 await query.edit_message_text("❌ Task non trovata!")
                 return
-            target_name = "te stesso" if target_user_id == assigned_by else "un membro della famiglia"
-            # Cerca il nome del target se diverso dall'assegnante
-            if target_user_id != assigned_by:
+            # Trova il nome del destinatario
+            if target_user_id == assigned_by:
+                target_name = "te stesso"
+            else:
                 members = db.get_family_members(chat_id)
-                for member in members:
-                    if member['user_id'] == target_user_id:
-                        target_name = member['first_name']
-                        break
+                target_name = next((m['first_name'] for m in members if m['user_id'] == target_user_id), str(target_user_id))
             keyboard = [
                 [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
                 [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
@@ -1079,7 +1077,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 reply_markup=reply_markup
             )
         except Exception as e:
-            logger.error(f"Errore nell'assegnazione task: {e}")
+            logger.error(f"Errore nell'assegnazione task: {e}", exc_info=True)
             await query.edit_message_text("❌ Errore nell'assegnazione della task. Riprova.")
 
     async def choose_assign_target(self, query, task_id):
