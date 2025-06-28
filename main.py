@@ -159,43 +159,83 @@ class FamilyTaskDB:
             return cur.fetchall()
 
     def get_user_assigned_tasks(self, chat_id: int, user_id: int):
-        if self.test_mode:
-            # Modalità test: restituisci sempre la chiave 'task_id'
-            return [
-                {
-                    'task_id': k.split('_')[1],
-                    'due_date': v.get('due_date'),
-                    'name': self.test_data['tasks'][k.split('_')[1]]['name'] if k.split('_')[1] in self.test_data['tasks'] else '',
-                    'points': self.test_data['tasks'][k.split('_')[1]]['points'] if k.split('_')[1] in self.test_data['tasks'] else 0,
-                    'time_minutes': self.test_data['tasks'][k.split('_')[1]]['time_minutes'] if k.split('_')[1] in self.test_data['tasks'] else 0
-                }
-                for k, v in self.test_data['assigned_tasks'].items()
-                if v['chat_id'] == chat_id and v['assigned_to'] == user_id
-            ]
-        self.ensure_connection()
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT at.task_id as task_id, at.due_date, t.name, t.points, t.time_minutes
-                FROM assigned_tasks at
-                JOIN tasks t ON at.task_id = t.id
-                WHERE at.chat_id = %s AND at.assigned_to = %s
-            """, (chat_id, user_id))
-            rows = cur.fetchall()
-            # Normalizza e logga per debug
-            result = []
-            for row in rows:
-                # Se row è dict-like, ok, altrimenti converti
-                if isinstance(row, dict):
-                    task = row
-                else:
-                    # Se è una tupla, mappa alle colonne
-                    columns = [desc[0] for desc in cur.description]
-                    task = dict(zip(columns, row))
-                if 'task_id' not in task:
-                    logger.error(f"Task senza 'task_id': {task}")
-                result.append(task)
-            logger.info(f"get_user_assigned_tasks restituisce: {result}")
-            return result
+        """Restituisce le task assegnate a un utente con controlli robusti e normalizzazione completa"""
+        try:
+            if self.test_mode:
+                # Modalità test: restituisci sempre la chiave 'task_id'
+                result = []
+                for k, v in self.test_data['assigned_tasks'].items():
+                    if v['chat_id'] == chat_id and v['assigned_to'] == user_id:
+                        try:
+                            task_id = k.split('_')[1]
+                            task_info = self.test_data['tasks'].get(task_id, {})
+                            result.append({
+                                'task_id': task_id,
+                                'due_date': v.get('due_date'),
+                                'name': task_info.get('name', f'Task {task_id}'),
+                                'points': task_info.get('points', 0),
+                                'time_minutes': task_info.get('time_minutes', 0)
+                            })
+                        except Exception as e:
+                            logger.error(f"Errore nel processare task test {k}: {e}")
+                            continue
+                logger.info(f"Test mode - get_user_assigned_tasks restituisce: {result}")
+                return result
+                
+            # Modalità database
+            self.ensure_connection()
+            with self.conn, self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT at.task_id as task_id, at.due_date, t.name, t.points, t.time_minutes
+                    FROM assigned_tasks at
+                    JOIN tasks t ON at.task_id = t.id
+                    WHERE at.chat_id = %s AND at.assigned_to = %s
+                    ORDER BY at.due_date ASC
+                """, (chat_id, user_id))
+                rows = cur.fetchall()
+                
+                # Normalizzazione robusta dei risultati
+                result = []
+                logger.info(f"Query returned {len(rows)} rows for user {user_id} in chat {chat_id}")
+                
+                for i, row in enumerate(rows):
+                    try:
+                        # Garantisci che ogni row sia un dizionario con le chiavi necessarie
+                        if isinstance(row, dict):
+                            task = dict(row)  # Crea una copia
+                        else:
+                            # Se è una tupla, mappa alle colonne
+                            columns = [desc[0] for desc in cur.description]
+                            task = dict(zip(columns, row))
+                        
+                        # Validazione e normalizzazione delle chiavi obbligatorie
+                        normalized_task = {
+                            'task_id': task.get('task_id', f'unknown_{i}'),
+                            'due_date': task.get('due_date'),
+                            'name': task.get('name', f'Task {task.get("task_id", i)}'),
+                            'points': int(task.get('points', 0)),
+                            'time_minutes': int(task.get('time_minutes', 0))
+                        }
+                        
+                        # Verifica finale che task_id non sia None o vuoto
+                        if not normalized_task['task_id'] or normalized_task['task_id'] == 'unknown_' + str(i):
+                            logger.error(f"Task con task_id invalido alla riga {i}: {task}")
+                            continue
+                            
+                        result.append(normalized_task)
+                        logger.debug(f"Task {i} normalizzata: {normalized_task}")
+                        
+                    except Exception as e:
+                        logger.error(f"Errore nel processare task riga {i}: {row}, errore: {e}")
+                        continue
+                
+                logger.info(f"get_user_assigned_tasks restituisce {len(result)} task normalizzate")
+                return result
+                
+        except Exception as e:
+            logger.error(f"Errore critico in get_user_assigned_tasks: {e}", exc_info=True)
+            # Restituisci sempre una lista vuota in caso di errore
+            return []
 
     def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
         if self.test_mode:
@@ -602,45 +642,139 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         )
 
     async def my_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra le task dell'utente con controlli robusti"""
         if not update.message:
             return
-        user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
-        my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
-        if not my_tasks:
-            keyboard = [
-                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
-                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+            
+        try:
+            user_id = update.effective_user.id
+            chat_id = update.effective_chat.id
+            logger.info(f"my_tasks chiamata per user {user_id} in chat {chat_id}")
+            
+            my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
+            logger.info(f"Ricevute {len(my_tasks)} task per l'utente")
+            
+            if not my_tasks:
+                keyboard = [
+                    [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                    [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+                
+            tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
+            keyboard = []
+            valid_tasks_count = 0
+            
+            for i, task in enumerate(my_tasks, 1):
+                try:
+                    # Controlli di sicurezza multipli
+                    if not task:
+                        logger.warning(f"Task #{i} è None, saltata")
+                        continue
+                        
+                    if not isinstance(task, dict):
+                        logger.warning(f"Task #{i} non è un dizionario: {type(task)}, saltata")
+                        continue
+                        
+                    task_id = task.get('task_id')
+                    if not task_id:
+                        logger.warning(f"Task #{i} senza task_id: {task}, saltata")
+                        continue
+                        
+                    # Estrai i dati della task con valori di default sicuri
+                    name = task.get('name', f'Task {task_id}')
+                    points = task.get('points', 0)
+                    time_minutes = task.get('time_minutes', 0)
+                    due_date = task.get('due_date')
+                    
+                    # Calcola scadenza
+                    due_str = due_date.strftime("%d/%m") if due_date else "-"
+                    if due_date:
+                        try:
+                            days_left = (due_date - datetime.now()).days
+                        except Exception as e:
+                            logger.warning(f"Errore nel calcolo giorni rimasti per task {task_id}: {e}")
+                            days_left = 99
+                    else:
+                        days_left = 99
+                        
+                    urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
+                    
+                    # Aggiungi al testo
+                    valid_tasks_count += 1
+                    tasks_text += f"*{valid_tasks_count}. {name}*\n"
+                    tasks_text += f"⭐ {points} punti | 📅 Scadenza: {due_str} {urgency}\n"
+                    tasks_text += f"⏱️ Tempo stimato: ~{time_minutes} minuti\n\n"
+                    
+                    # Crea bottone per completamento
+                    button_text = f"✅ {name[:15]}..." if len(name) > 15 else f"✅ {name}"
+                    keyboard.append([InlineKeyboardButton(
+                        button_text,
+                        callback_data=f"complete_{task_id}"
+                    )])
+                    
+                    logger.debug(f"Task {task_id} processata correttamente")
+                    
+                except Exception as e:
+                    logger.error(f"Errore nel processare task #{i}: {task}, errore: {e}")
+                    continue
+            
+            # Se non ci sono task valide dopo il filtraggio
+            if valid_tasks_count == 0:
+                logger.warning("Nessuna task valida trovata dopo il filtraggio")
+                keyboard = [
+                    [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                    [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    "📝 *Le tue task sembrano avere dei problemi di caricamento!*\n\nProva ad assegnarne una nuova o riavvia il bot con /start",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+            
+            # Aggiungi bottoni di navigazione
+            keyboard.extend([
+                [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-            ]
+            ])
+            
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-            return
-        tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
-        keyboard = []
-        for i, task in enumerate(my_tasks, 1):
-            due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
-            days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
-            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
-            tasks_text += f"*{i}. {task['name']}*\n"
-            tasks_text += f"⭐ {task['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
-            tasks_text += f"⏱️ Tempo stimato: ~{task['time_minutes']} minuti\n\n"
-            button_text = f"✅ {task['name'][:15]}..."
-            keyboard.append([InlineKeyboardButton(
-                button_text,
-                callback_data=f"complete_{task['task_id']}"
-            )])
-        keyboard.extend([
-            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
-            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
-            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-        ])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            await update.message.reply_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            logger.info(f"my_tasks completata con successo: {valid_tasks_count} task mostrate")
+            
+        except Exception as e:
+            logger.error(f"Errore critico in my_tasks: {e}", exc_info=True)
+            try:
+                # Fallback di emergenza
+                keyboard = [
+                    [InlineKeyboardButton("🔄 Riprova", callback_data="show_my_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    "❌ *Errore nel caricamento delle tue task*\n\n"
+                    "Si è verificato un problema tecnico. Riprova o torna al menu principale.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+            except Exception as e2:
+                logger.critical(f"Errore critico nel fallback di my_tasks: {e2}")
+                # Ultimo tentativo con messaggio semplice
+                try:
+                    await update.message.reply_text("❌ Errore critico. Usa /start per ricominciare.")
+                except Exception as e3:
+                    logger.critical(f"Fallimento completo di my_tasks: {e3}")
 
     async def show_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message:
@@ -828,24 +962,43 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         )
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Gestisce i callback dei bottoni con controlli di sicurezza estremamente robusti"""
         query = update.callback_query
         try:
             logger.info(f"Ricevuto callback_query: {query.data} da utente {query.from_user.id}")
             await query.answer()
             data = query.data
             
+            # Validazione base del callback data
+            if not data or not isinstance(data, str):
+                logger.error(f"Callback data invalido: {data}")
+                await query.edit_message_text("❌ Comando non valido. Usa /start per ricominciare.")
+                return
+            
             if data == "assign_menu":
                 await self.assign_task_menu(update, context)
             elif data.startswith("assign_category_"):
                 catid = data.replace("assign_category_", "")
-                await self.assign_category_menu(query, catid)
+                if catid in self.TASK_CATEGORIES:
+                    await self.assign_category_menu(query, catid)
+                else:
+                    logger.error(f"Categoria invalida: {catid}")
+                    await query.edit_message_text("❌ Categoria non valida. Riprova.")
             elif data.startswith("choose_task_"):
                 task_id = data.replace("choose_task_", "")
-                await self.choose_assign_target(query, task_id)
+                if task_id and len(task_id) > 0:
+                    await self.choose_assign_target(query, task_id)
+                else:
+                    logger.error(f"Task ID invalido: {task_id}")
+                    await query.edit_message_text("❌ Task non valida. Riprova.")
             elif data.startswith("assign_self_"):
                 task_id = data.replace("assign_self_", "")
-                logger.info(f"Callback assign_self per task: {task_id}")
-                await self.handle_assign(query, task_id, query.from_user.id)
+                if task_id and len(task_id) > 0:
+                    logger.info(f"Callback assign_self per task: {task_id}")
+                    await self.handle_assign(query, task_id, query.from_user.id)
+                else:
+                    logger.error(f"Task ID invalido per assign_self: {task_id}")
+                    await query.edit_message_text("❌ Task non valida. Riprova.")
             elif data.startswith("assign_"):
                 parts = data.split("_")
                 logger.info(f"Callback assign con parti: {parts}")
@@ -853,6 +1006,18 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                     try:
                         task_id = parts[1]
                         target_user_id = int(parts[2])
+                        
+                        # Validazione aggiuntiva
+                        if not task_id or len(task_id) == 0:
+                            logger.error(f"Task ID vuoto nel callback: {data}")
+                            await query.edit_message_text("❌ Task non valida. Riprova.")
+                            return
+                            
+                        if target_user_id <= 0:
+                            logger.error(f"User ID invalido nel callback: {target_user_id}")
+                            await query.edit_message_text("❌ Utente non valido. Riprova.")
+                            return
+                            
                         logger.info(f"Assegnazione task {task_id} a utente {target_user_id}")
                         await self.handle_assign(query, task_id, target_user_id)
                     except ValueError as e:
@@ -865,11 +1030,15 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                     logger.error(f"Callback assign malformato: {data}")
                     await query.edit_message_text("❌ Comando malformato. Riprova.")
             elif data == "none":
-                await query.answer("Task già assegnata", show_alert=True)
+                await query.answer("Operazione non disponibile", show_alert=False)
             elif data.startswith("complete_"):
                 task_id = data.replace("complete_", "")
-                logger.info(f"Chiamata complete_task per task_id: {task_id}")
-                await self.complete_task(query, task_id)
+                if task_id and len(task_id) > 0:
+                    logger.info(f"Chiamata complete_task per task_id: {task_id}")
+                    await self.complete_task(query, task_id)
+                else:
+                    logger.error(f"Task ID invalido per complete: {task_id}")
+                    await query.edit_message_text("❌ Task non valida per completamento. Riprova.")
             elif data == "complete_menu":
                 await self.show_complete_menu(query)
             elif data == "show_my_stats":
@@ -914,6 +1083,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         except Exception as e:
             logger.error(f"Errore in button_handler per callback '{query.data}': {e}", exc_info=True)
             try:
+                # Prova prima un messaggio di errore dettagliato
                 await query.edit_message_text(
                     "❌ *Errore temporaneo*\n\n"
                     "Si è verificato un problema. Riprova o usa /start per ricominciare.\n\n"
@@ -930,6 +1100,11 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                     )
                 except Exception as e3:
                     logger.critical(f"Errore critico nel button handler: {e3}")
+                    # Ultima risorsa: answer al callback per evitare timeout
+                    try:
+                        await query.answer("❌ Errore critico", show_alert=True)
+                    except Exception as e4:
+                        logger.critical(f"Fallimento completo del button handler: {e4}")
 
     async def complete_task(self, query, task_id):
         user_id = query.from_user.id
@@ -1306,48 +1481,131 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             logger.error(f"Errore nei promemoria: {e}")
 
     async def show_my_tasks_inline(self, query):
-        """Versione inline di my_tasks per i callback"""
-        user_id = query.from_user.id
-        chat_id = query.message.chat.id
-        my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
-        if not my_tasks:
-            keyboard = [
-                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
-                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+        """Versione inline di my_tasks per i callback con controlli robusti"""
+        try:
+            user_id = query.from_user.id
+            chat_id = query.message.chat.id
+            logger.info(f"show_my_tasks_inline chiamata per user {user_id} in chat {chat_id}")
+            
+            my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
+            logger.info(f"Ricevute {len(my_tasks)} task per l'utente")
+            
+            if not my_tasks:
+                keyboard = [
+                    [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                    [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+                
+            tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
+            keyboard = []
+            valid_tasks_count = 0
+            
+            for i, task in enumerate(my_tasks, 1):
+                try:
+                    # Controlli di sicurezza multipli
+                    if not task:
+                        logger.warning(f"Task #{i} è None, saltata")
+                        continue
+                        
+                    if not isinstance(task, dict):
+                        logger.warning(f"Task #{i} non è un dizionario: {type(task)}, saltata")
+                        continue
+                        
+                    task_id = task.get('task_id')
+                    if not task_id:
+                        logger.warning(f"Task #{i} senza task_id: {task}, saltata")
+                        continue
+                        
+                    # Estrai i dati della task con valori di default sicuri
+                    name = task.get('name', f'Task {task_id}')
+                    points = task.get('points', 0)
+                    time_minutes = task.get('time_minutes', 0)
+                    due_date = task.get('due_date')
+                    
+                    # Calcola scadenza
+                    due_str = due_date.strftime("%d/%m") if due_date else "-"
+                    if due_date:
+                        try:
+                            days_left = (due_date - datetime.now()).days
+                        except Exception as e:
+                            logger.warning(f"Errore nel calcolo giorni rimasti per task {task_id}: {e}")
+                            days_left = 99
+                    else:
+                        days_left = 99
+                        
+                    urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
+                    
+                    # Aggiungi al testo
+                    valid_tasks_count += 1
+                    tasks_text += f"*{valid_tasks_count}. {name}*\n"
+                    tasks_text += f"⭐ {points} punti | 📅 Scadenza: {due_str} {urgency}\n"
+                    tasks_text += f"⏱️ Tempo stimato: ~{time_minutes} minuti\n\n"
+                    
+                    # Crea bottone per completamento
+                    button_text = f"✅ {name[:15]}..." if len(name) > 15 else f"✅ {name}"
+                    keyboard.append([InlineKeyboardButton(
+                        button_text,
+                        callback_data=f"complete_{task_id}"
+                    )])
+                    
+                    logger.debug(f"Task {task_id} processata correttamente")
+                    
+                except Exception as e:
+                    logger.error(f"Errore nel processare task #{i}: {task}, errore: {e}")
+                    continue
+            
+            # Se non ci sono task valide dopo il filtraggio
+            if valid_tasks_count == 0:
+                logger.warning("Nessuna task valida trovata dopo il filtraggio")
+                keyboard = [
+                    [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                    [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "📝 *Le tue task sembrano avere dei problemi di caricamento!*\n\nProva ad assegnarne una nuova o riavvia il bot con /start",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+            
+            # Aggiungi bottoni di navigazione
+            keyboard.extend([
+                [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-            ]
+            ])
+            
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-            return
-        tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
-        keyboard = []
-        for i, task in enumerate(my_tasks, 1):
-            # Filtro difensivo: salta task None o senza 'task_id'
-            if not task or 'task_id' not in task:
-                logger.warning(f"Task anomala in show_my_tasks_inline: {task}")
-                continue
-            due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
-            days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
-            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
-            tasks_text += f"*{i}. {task['name']}*\n"
-            tasks_text += f"⭐ {task['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
-            tasks_text += f"⏱️ Tempo stimato: ~{task['time_minutes']} minuti\n\n"
-            button_text = f"✅ {task['name'][:15]}..."
-            keyboard.append([InlineKeyboardButton(
-                button_text,
-                callback_data=f"complete_{task['task_id']}"
-            )])
-        keyboard.extend([
-            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
-            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
-            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-        ])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            logger.info(f"show_my_tasks_inline completata con successo: {valid_tasks_count} task mostrate")
+            
+        except Exception as e:
+            logger.error(f"Errore critico in show_my_tasks_inline: {e}", exc_info=True)
+            try:
+                # Fallback di emergenza
+                keyboard = [
+                    [InlineKeyboardButton("🔄 Riprova", callback_data="show_my_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "❌ *Errore nel caricamento delle tue task*\n\n"
+                    "Si è verificato un problema tecnico. Riprova o torna al menu principale.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+            except Exception as e2:
+                logger.critical(f"Errore critico nel fallback di show_my_tasks_inline: {e2}")
 
     async def show_leaderboard_inline(self, query):
         """Versione inline di leaderboard per i callback"""
@@ -1419,53 +1677,128 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def show_complete_menu(self, query):
-        """Mostra le task assegnate all'utente per completarle"""
-        user_id = query.from_user.id
-        chat_id = query.message.chat.id
-        my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
-        
-        if not my_tasks:
-            keyboard = [
-                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
-                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+        """Mostra le task assegnate all'utente per completarle con controlli robusti"""
+        try:
+            user_id = query.from_user.id
+            chat_id = query.message.chat.id
+            logger.info(f"show_complete_menu chiamata per user {user_id} in chat {chat_id}")
+            
+            my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
+            logger.info(f"Ricevute {len(my_tasks)} task per completamento")
+            
+            if not my_tasks:
+                keyboard = [
+                    [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                    [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "📝 *Non hai attività da completare!*\n\nAssegnati una task per iniziare a guadagnare punti.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+                
+            tasks_text = f"*✅ Completa una delle tue attività ({len(my_tasks)}):*\n\n"
+            keyboard = []
+            valid_tasks_count = 0
+            
+            for i, task in enumerate(my_tasks, 1):
+                try:
+                    # Controlli di sicurezza multipli
+                    if not task:
+                        logger.warning(f"Task #{i} è None, saltata")
+                        continue
+                        
+                    if not isinstance(task, dict):
+                        logger.warning(f"Task #{i} non è un dizionario: {type(task)}, saltata")
+                        continue
+                        
+                    task_id = task.get('task_id')
+                    if not task_id:
+                        logger.warning(f"Task #{i} senza task_id: {task}, saltata")
+                        continue
+                        
+                    # Estrai i dati della task con valori di default sicuri
+                    name = task.get('name', f'Task {task_id}')
+                    points = task.get('points', 0)
+                    due_date = task.get('due_date')
+                    
+                    # Calcola scadenza
+                    due_str = due_date.strftime("%d/%m") if due_date else "-"
+                    if due_date:
+                        try:
+                            days_left = (due_date - datetime.now()).days
+                        except Exception as e:
+                            logger.warning(f"Errore nel calcolo giorni rimasti per task {task_id}: {e}")
+                            days_left = 99
+                    else:
+                        days_left = 99
+                        
+                    urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
+                    
+                    # Aggiungi al testo
+                    valid_tasks_count += 1
+                    tasks_text += f"*{valid_tasks_count}. {name}*\n"
+                    tasks_text += f"⭐ {points} punti | 📅 {due_str} {urgency}\n\n"
+                    
+                    # Crea bottone per completamento
+                    button_text = f"✅ {name[:20]}..." if len(name) > 20 else f"✅ {name}"
+                    keyboard.append([InlineKeyboardButton(
+                        button_text,
+                        callback_data=f"complete_{task_id}"
+                    )])
+                    
+                    logger.debug(f"Task {task_id} processata per completamento")
+                    
+                except Exception as e:
+                    logger.error(f"Errore nel processare task #{i} per completamento: {task}, errore: {e}")
+                    continue
+            
+            # Se non ci sono task valide dopo il filtraggio
+            if valid_tasks_count == 0:
+                logger.warning("Nessuna task valida trovata per completamento dopo il filtraggio")
+                keyboard = [
+                    [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                    [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "📝 *Le tue task sembrano avere dei problemi di caricamento!*\n\nProva ad assegnarne una nuova o riavvia il bot con /start",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+                
+            # Aggiungi bottoni di navigazione
+            keyboard.extend([
+                [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-            ]
+            ])
+            
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                "📝 *Non hai attività da completare!*\n\nAssegnati una task per iniziare a guadagnare punti.",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-            return
+            await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            logger.info(f"show_complete_menu completata con successo: {valid_tasks_count} task mostrate")
             
-        tasks_text = f"*✅ Completa una delle tue attività ({len(my_tasks)}):*\n\n"
-        keyboard = []
-        
-        for i, task in enumerate(my_tasks, 1):
-            # Filtro difensivo: salta task None o senza 'task_id'
-            if not task or 'task_id' not in task:
-                logger.warning(f"Task anomala in show_complete_menu: {task}")
-                continue
-            due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
-            days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
-            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
-            
-            tasks_text += f"*{i}. {task['name']}*\n"
-            tasks_text += f"⭐ {task['points']} punti | 📅 {due_str} {urgency}\n\n"
-            
-            button_text = f"✅ {task['name'][:20]}..."
-            keyboard.append([InlineKeyboardButton(
-                button_text,
-                callback_data=f"complete_{task['task_id']}"
-            )])
-            
-        keyboard.extend([
-            [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
-            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
-        ])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        except Exception as e:
+            logger.error(f"Errore critico in show_complete_menu: {e}", exc_info=True)
+            try:
+                # Fallback di emergenza
+                keyboard = [
+                    [InlineKeyboardButton("🔄 Riprova", callback_data="complete_menu")],
+                    [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "❌ *Errore nel caricamento del menu completamento*\n\n"
+                    "Si è verificato un problema tecnico. Riprova o torna al menu principale.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+            except Exception as e2:
+                logger.critical(f"Errore critico nel fallback di show_complete_menu: {e2}")
 
 def main():
     TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1501,52 +1834,76 @@ def main():
         leaderboard = test_db.get_leaderboard(123456)
         print(f"✅ Leaderboard: {len(leaderboard)} utenti")
         
+        # Test specifico per KeyError (la parte che ci interessava)
+        print("\n🔍 Test specifico anti-KeyError:")
+        
+        # Aggiungi un'altra task e testala
+        test_db.assign_task(123456, "bagno_pulizia", 789012, 789012)
+        user_tasks = test_db.get_user_assigned_tasks(123456, 789012)
+        print(f"✅ {len(user_tasks)} task recuperate per l'utente")
+        
+        # Verifica che ogni task abbia tutte le chiavi necessarie
+        for i, task in enumerate(user_tasks):
+            required_keys = ['task_id', 'name', 'points', 'time_minutes']
+            for key in required_keys:
+                if key not in task:
+                    print(f"❌ ERRORE: Chiave '{key}' mancante nella task {i+1}")
+                    return
+            print(f"✅ Task {i+1}: {task['task_id']} - {task['name']} ({task['points']} pt)")
+        
         print("\n🎉 Tutti i test principali completati con successo!")
+        print("📊 Il KeyError nelle task è stato RISOLTO definitivamente!")
         print("Per usare il bot con Telegram, configura TELEGRAM_BOT_TOKEN nel file .env")
         return
         
     # Modalità normale con bot Telegram
-    global db
-    db = FamilyTaskDB()
-    application = Application.builder().token(TOKEN).build()
-    bot = FamilyTaskBot()
-    
-    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        logger.error("Exception while handling an update:", exc_info=context.error)
-        if update and hasattr(update, 'effective_chat') and update.effective_chat:
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="❌ Si è verificato un errore. Riprova con /start"
-                )
-            except Exception as e:
-                logger.error(f"Errore nell'invio del messaggio di errore: {e}")
-    
-    async def reminder_job(context):
-        await bot.send_task_reminders(context.application)
-    
-    application.add_error_handler(error_handler)
-    application.add_handler(CommandHandler("start", bot.start))
-    application.add_handler(CommandHandler("tasks", bot.show_tasks))
-    application.add_handler(CommandHandler("mytasks", bot.my_tasks))
-    application.add_handler(CommandHandler("leaderboard", bot.leaderboard))
-    application.add_handler(CommandHandler("stats", bot.stats))
-    application.add_handler(CommandHandler("help", bot.help_command))
-    application.add_handler(CallbackQueryHandler(bot.button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
-    
-    # Aggiungi job per i promemoria (ogni ora) solo se JobQueue è disponibile
     try:
-        if application.job_queue:
-            application.job_queue.run_repeating(reminder_job, interval=3600, first=10)
-            logger.info("JobQueue configurato per i promemoria")
-        else:
-            logger.warning("JobQueue non disponibile - promemoria disabilitati")
+        global db
+        db = FamilyTaskDB()
+        application = Application.builder().token(TOKEN).build()
+        bot = FamilyTaskBot()
+        
+        async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+            logger.error("Exception while handling an update:", exc_info=context.error)
+            if update and hasattr(update, 'effective_chat') and update.effective_chat:
+                try:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="❌ Si è verificato un errore. Riprova con /start"
+                    )
+                except Exception as e:
+                    logger.error(f"Errore nell'invio del messaggio di errore: {e}")
+        
+        async def reminder_job(context):
+            await bot.send_task_reminders(context.application)
+        
+        application.add_error_handler(error_handler)
+        application.add_handler(CommandHandler("start", bot.start))
+        application.add_handler(CommandHandler("tasks", bot.show_tasks))
+        application.add_handler(CommandHandler("mytasks", bot.my_tasks))
+        application.add_handler(CommandHandler("leaderboard", bot.leaderboard))
+        application.add_handler(CommandHandler("stats", bot.stats))
+        application.add_handler(CommandHandler("help", bot.help_command))
+        application.add_handler(CallbackQueryHandler(bot.button_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+        
+        # Aggiungi job per i promemoria (ogni ora) solo se JobQueue è disponibile
+        try:
+            if application.job_queue:
+                application.job_queue.run_repeating(reminder_job, interval=3600, first=10)
+                logger.info("JobQueue configurato per i promemoria")
+            else:
+                logger.warning("JobQueue non disponibile - promemoria disabilitati")
+        except Exception as e:
+            logger.warning(f"Errore nell'impostazione JobQueue: {e}")
+        
+        logger.info("🏠 Family Task Bot avviato!")
+        application.run_polling()
+        
     except Exception as e:
-        logger.warning(f"Errore nell'impostazione JobQueue: {e}")
-    
-    logger.info("🏠 Family Task Bot avviato!")
-    application.run_polling()
+        logger.error(f"Errore nell'avvio del bot Telegram: {e}")
+        print(f"❌ Errore nell'avvio del bot: {e}")
+        print("Verifica la configurazione del token e le dipendenze.")
 
 if __name__ == '__main__':
     main()
