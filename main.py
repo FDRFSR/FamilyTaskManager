@@ -104,27 +104,65 @@ class FamilyTaskDB:
             return default_tasks
             
         # Carica task di default solo se non esistono, poi restituisce dizionario indicizzato per id
-        self.ensure_connection()
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM tasks;")
-            if cur.fetchone()[0] == 0:
-                default = [
-                    ("cucina_pulizia", "🍽️ Pulire la cucina", 15, 30),
-                    ("bagno_pulizia", "🚿 Pulire il bagno", 20, 40),
-                    ("aspirapolvere", "🧹 Passare l'aspirapolvere", 12, 25),
-                    ("lavastoviglie", "🍴 Caricare/svuotare lavastoviglie", 8, 15),
-                    ("bucato", "👕 Fare il bucato", 10, 20),
-                    ("stirare", "👔 Stirare", 18, 35),
-                    ("spazzatura", "🗑️ Portare fuori la spazzatura", 5, 10),
-                    ("giardino", "🌱 Curare il giardino", 25, 50),
-                    ("spesa", "🛒 Fare la spesa", 15, 30),
-                    ("letti", "🛏️ Rifare i letti", 6, 12),
-                    ("pavimenti", "🧽 Lavare i pavimenti", 20, 40),
-                    ("finestre", "🪟 Pulire le finestre", 22, 45)
-                ]
-                cur.executemany("INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s)", default)
-            cur.execute("SELECT * FROM tasks")
-            return {row['id']: dict(row) for row in cur.fetchall()}
+        try:
+            self.ensure_connection()
+            with self.conn, self.conn.cursor() as cur:
+                # Gestione robusta della query COUNT
+                cur.execute("SELECT COUNT(*) FROM tasks;")
+                count_result = cur.fetchone()
+                
+                # Controllo robusto del risultato COUNT
+                task_count = 0
+                if count_result and count_result[0] is not None:
+                    task_count = int(count_result[0])
+                
+                logging.info(f"Task count in database: {task_count}")
+                
+                if task_count == 0:
+                    default = [
+                        ("cucina_pulizia", "🍽️ Pulire la cucina", 15, 30),
+                        ("bagno_pulizia", "🚿 Pulire il bagno", 20, 40),
+                        ("aspirapolvere", "🧹 Passare l'aspirapolvere", 12, 25),
+                        ("lavastoviglie", "🍴 Caricare/svuotare lavastoviglie", 8, 15),
+                        ("bucato", "👕 Fare il bucato", 10, 20),
+                        ("stirare", "👔 Stirare", 18, 35),
+                        ("spazzatura", "🗑️ Portare fuori la spazzatura", 5, 10),
+                        ("giardino", "🌱 Curare il giardino", 25, 50),
+                        ("spesa", "🛒 Fare la spesa", 15, 30),
+                        ("letti", "🛏️ Rifare i letti", 6, 12),
+                        ("pavimenti", "🧽 Lavare i pavimenti", 20, 40),
+                        ("finestre", "🪟 Pulire le finestre", 22, 45)
+                    ]
+                    cur.executemany("INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s)", default)
+                    logging.info("Task di default inserite nel database")
+                
+                # Recupera tutte le task dal database
+                cur.execute("SELECT * FROM tasks")
+                rows = cur.fetchall()
+                
+                # Restituisce un dizionario indicizzato per id
+                result = {row['id']: dict(row) for row in rows}
+                logging.info(f"Caricate {len(result)} task dal database")
+                return result
+            
+        except Exception as e:
+            logging.error(f"Errore critico in get_default_tasks: {e}", exc_info=True)
+            # Restituisce un set di task di emergenza in caso di errore del database
+            logging.warning("Restituendo task di emergenza a causa di errore database")
+            return {
+                "cucina_pulizia": {"id": "cucina_pulizia", "name": "🍽️ Pulire la cucina", "points": 15, "time_minutes": 30},
+                "bagno_pulizia": {"id": "bagno_pulizia", "name": "🚿 Pulire il bagno", "points": 20, "time_minutes": 40},
+                "aspirapolvere": {"id": "aspirapolvere", "name": "🧹 Passare l'aspirapolvere", "points": 12, "time_minutes": 25},
+                "lavastoviglie": {"id": "lavastoviglie", "name": "🍴 Caricare/svuotare lavastoviglie", "points": 8, "time_minutes": 15},
+                "bucato": {"id": "bucato", "name": "👕 Fare il bucato", "points": 10, "time_minutes": 20},
+                "stirare": {"id": "stirare", "name": "👔 Stirare", "points": 18, "time_minutes": 35},
+                "spazzatura": {"id": "spazzatura", "name": "🗑️ Portare fuori la spazzatura", "points": 5, "time_minutes": 10},
+                "giardino": {"id": "giardino", "name": "🌱 Curare il giardino", "points": 25, "time_minutes": 50},
+                "spesa": {"id": "spesa", "name": "🛒 Fare la spesa", "points": 15, "time_minutes": 30},
+                "letti": {"id": "letti", "name": "🛏️ Rifare i letti", "points": 6, "time_minutes": 12},
+                "pavimenti": {"id": "pavimenti", "name": "🧽 Lavare i pavimenti", "points": 20, "time_minutes": 40},
+                "finestre": {"id": "finestre", "name": "🪟 Pulire le finestre", "points": 22, "time_minutes": 45}
+            }
 
     def get_all_tasks(self):
         if self.test_mode:
@@ -305,7 +343,12 @@ class FamilyTaskDB:
                     WHERE chat_id = %s AND task_id = %s AND assigned_to = %s
                 """, (chat_id, task_id, assigned_to))
                 
-                if cur.fetchone()[0] > 0:
+                count_result = cur.fetchone()
+                existing_count = 0
+                if count_result and count_result[0] is not None:
+                    existing_count = int(count_result[0])
+                
+                if existing_count > 0:
                     logger.warning(f"Task {task_id} già assegnata a utente {assigned_to} in chat {chat_id}")
                     raise ValueError(f"Task {task_id} è già assegnata a questo utente")
                 
