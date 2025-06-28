@@ -1002,10 +1002,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 # Mostra a chi è assegnata
                 assigned_to_names = ', '.join(assigned_map[task_id])
                 button_text = f"{task['name']} (a {assigned_to_names})"
-                keyboard.append([InlineKeyboardButton(button_text, callback_data="already_assigned")])
+                keyboard.append([InlineKeyboardButton(button_text, callback_data="none")])
             else:
                 button_text = task['name']
-                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"assign_task_{task_id}")])
+                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"choose_task_{task_id}")])
         keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
