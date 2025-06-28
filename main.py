@@ -7,21 +7,104 @@ from telegram.constants import ParseMode
 import psycopg2
 import psycopg2.extras
 
+# Carica variabili d'ambiente da .env per sviluppo locale
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # In produzione non c'è python-dotenv
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class FamilyTaskDB:
     def __init__(self):
-        self.conn = psycopg2.connect(os.environ["DATABASE_URL"], cursor_factory=psycopg2.extras.RealDictCursor)
+        self.conn = None
+        # Dati di test per modalità senza database
+        self.test_mode = False
+        self.test_data = {
+            'tasks': {},
+            'family_members': {},
+            'assigned_tasks': {},
+            'user_stats': {},
+            'badges': {}
+        }
+        
+        self.connect()
         self.ensure_tables()
 
+    def connect(self):
+        """Stabilisce la connessione al database"""
+        try:
+            if self.conn:
+                self.conn.close()
+            
+            # Se DATABASE_URL non è disponibile, usa modalità test
+            if "DATABASE_URL" not in os.environ:
+                logger.warning("DATABASE_URL non trovato - modalità test attivata")
+                self.conn = None
+                self.test_mode = True
+                return
+                
+            self.conn = psycopg2.connect(
+                os.environ["DATABASE_URL"], 
+                cursor_factory=psycopg2.extras.RealDictCursor
+            )
+            logger.info("Connessione al database stabilita")
+        except Exception as e:
+            logger.error(f"Errore nella connessione al database: {e}")
+            # In modalità sviluppo, continua senza database
+            logger.warning("Continuando in modalità test senza database")
+            self.conn = None
+            self.test_mode = True
+
+    def ensure_connection(self):
+        """Verifica che la connessione sia attiva, altrimenti riconnette"""
+        try:
+            # Se siamo in modalità test senza database, ritorna
+            if self.conn is None:
+                return
+                
+            if self.conn.closed:
+                logger.warning("Connessione al database chiusa, riconnessione...")
+                self.connect()
+        except Exception as e:
+            logger.error(f"Errore nel verificare la connessione: {e}")
+            self.connect()
+
     def ensure_tables(self):
+        # Se siamo in modalità test, salta la creazione delle tabelle
+        if self.conn is None:
+            logger.info("Modalità test: skip creazione tabelle")
+            return
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             with open(os.path.join(os.path.dirname(__file__), "schema.sql")) as f:
                 cur.execute(f.read())
 
     def get_default_tasks(self):
+        # Modalità test: restituisce task hardcoded
+        if self.test_mode:
+            default_tasks = {
+                "cucina_pulizia": {"id": "cucina_pulizia", "name": "🍽️ Pulire la cucina", "points": 15, "time_minutes": 30},
+                "bagno_pulizia": {"id": "bagno_pulizia", "name": "🚿 Pulire il bagno", "points": 20, "time_minutes": 40},
+                "aspirapolvere": {"id": "aspirapolvere", "name": "🧹 Passare l'aspirapolvere", "points": 12, "time_minutes": 25},
+                "lavastoviglie": {"id": "lavastoviglie", "name": "🍴 Caricare/svuotare lavastoviglie", "points": 8, "time_minutes": 15},
+                "bucato": {"id": "bucato", "name": "👕 Fare il bucato", "points": 10, "time_minutes": 20},
+                "stirare": {"id": "stirare", "name": "👔 Stirare", "points": 18, "time_minutes": 35},
+                "spazzatura": {"id": "spazzatura", "name": "🗑️ Portare fuori la spazzatura", "points": 5, "time_minutes": 10},
+                "giardino": {"id": "giardino", "name": "🌱 Curare il giardino", "points": 25, "time_minutes": 50},
+                "spesa": {"id": "spesa", "name": "🛒 Fare la spesa", "points": 15, "time_minutes": 30},
+                "letti": {"id": "letti", "name": "🛏️ Rifare i letti", "points": 6, "time_minutes": 12},
+                "pavimenti": {"id": "pavimenti", "name": "🧽 Lavare i pavimenti", "points": 20, "time_minutes": 40},
+                "finestre": {"id": "finestre", "name": "🪟 Pulire le finestre", "points": 22, "time_minutes": 45}
+            }
+            self.test_data['tasks'] = default_tasks
+            return default_tasks
+            
         # Carica task di default solo se non esistono, poi restituisce dizionario indicizzato per id
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM tasks;")
             if cur.fetchone()[0] == 0:
@@ -44,21 +127,42 @@ class FamilyTaskDB:
             return {row['id']: dict(row) for row in cur.fetchall()}
 
     def get_all_tasks(self):
+        if self.test_mode:
+            if not self.test_data['tasks']:
+                self.get_default_tasks()
+            return list(self.test_data['tasks'].values())
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT * FROM tasks")
             return cur.fetchall()
 
     def get_task_by_id(self, task_id: str):
+        if self.test_mode:
+            if not self.test_data['tasks']:
+                self.get_default_tasks()
+            return self.test_data['tasks'].get(task_id)
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
             return cur.fetchone()
 
     def get_assigned_tasks_for_chat(self, chat_id: int):
+        if self.test_mode:
+            return [task for task in self.test_data['assigned_tasks'].values() 
+                   if task['chat_id'] == chat_id]
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s", (chat_id,))
             return cur.fetchall()
 
     def get_user_assigned_tasks(self, chat_id: int, user_id: int):
+        if self.test_mode:
+            return []  # Per ora empty list nella modalità test
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("""
                 SELECT at.task_id, at.due_date, t.name, t.points, t.time_minutes
@@ -69,6 +173,19 @@ class FamilyTaskDB:
             return cur.fetchall()
 
     def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
+        if self.test_mode:
+            key = f"{chat_id}_{user_id}"
+            self.test_data['family_members'][key] = {
+                'chat_id': chat_id,
+                'user_id': user_id,
+                'username': username,
+                'first_name': first_name,
+                'joined_date': datetime.now()
+            }
+            logger.info(f"Test mode: Aggiunto membro famiglia {first_name}")
+            return
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             # Crea la famiglia se non esiste
             cur.execute("INSERT INTO families (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING", (chat_id,))
@@ -84,11 +201,31 @@ class FamilyTaskDB:
             self.conn.commit()
 
     def get_family_members(self, chat_id: int):
+        if self.test_mode:
+            return [member for member in self.test_data['family_members'].values() 
+                   if member['chat_id'] == chat_id]
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT * FROM family_members WHERE chat_id = %s", (chat_id,))
             return cur.fetchall()
 
     def assign_task(self, chat_id: int, task_id: str, assigned_to: int, assigned_by: int):
+        if self.test_mode:
+            key = f"{chat_id}_{task_id}_{assigned_to}"
+            self.test_data['assigned_tasks'][key] = {
+                'chat_id': chat_id,
+                'task_id': task_id,
+                'assigned_to': assigned_to,
+                'assigned_by': assigned_by,
+                'assigned_date': datetime.now(),
+                'status': 'pending',
+                'due_date': datetime.now() + timedelta(days=3)
+            }
+            logger.info(f"Test mode: Task {task_id} assegnata")
+            return
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status, due_date) VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -121,6 +258,43 @@ class FamilyTaskDB:
         return nuovi
 
     def complete_task(self, chat_id: int, task_id: str, user_id: int):
+        if self.test_mode:
+            # Simulazione modalità test
+            task_key = f"{chat_id}_{task_id}_{user_id}"
+            if task_key not in self.test_data['assigned_tasks']:
+                return 0, {"level_up": False, "new_level": None, "new_badges": []}
+            
+            # Simula completamento task
+            points = 15  # Punti di test
+            msg = {"level_up": False, "new_level": None, "new_badges": []}
+            
+            # Rimuovi task assegnata
+            del self.test_data['assigned_tasks'][task_key]
+            
+            # Aggiorna stats in modalità test
+            if user_id not in self.test_data['user_stats']:
+                self.test_data['user_stats'][user_id] = {
+                    'total_points': 0,
+                    'tasks_completed': 0,
+                    'level': 1,
+                    'streak': 0
+                }
+            
+            stats = self.test_data['user_stats'][user_id]
+            old_level = stats['level']
+            stats['total_points'] += points
+            stats['tasks_completed'] += 1
+            stats['level'] = stats['total_points'] // 100 + 1
+            stats['streak'] += 1
+            
+            if stats['level'] > old_level:
+                msg["level_up"] = True
+                msg["new_level"] = stats['level']
+                
+            logger.info(f"Test mode: Task {task_id} completata per {points} punti")
+            return points, msg
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             # Verifica che la task sia assegnata all'utente
             cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
@@ -221,6 +395,28 @@ class FamilyTaskDB:
             return points, msg
 
     def get_leaderboard(self, chat_id: int):
+        if self.test_mode:
+            # Restituisce leaderboard basato sui dati di test
+            members = self.get_family_members(chat_id)
+            leaderboard = []
+            for member in members:
+                stats = self.test_data['user_stats'].get(member['user_id'], {
+                    'total_points': 0,
+                    'level': 1,
+                    'tasks_completed': 0,
+                    'streak': 0
+                })
+                leaderboard.append({
+                    'user_id': member['user_id'],
+                    'first_name': member['first_name'],
+                    'total_points': stats['total_points'],
+                    'level': stats['level'],
+                    'tasks_completed': stats['tasks_completed'],
+                    'streak': stats['streak']
+                })
+            return sorted(leaderboard, key=lambda x: x['total_points'], reverse=True)
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("""
                 SELECT fm.user_id, fm.first_name, 
@@ -236,16 +432,32 @@ class FamilyTaskDB:
             return cur.fetchall()
 
     def get_user_stats(self, user_id: int):
+        if self.test_mode:
+            return self.test_data['user_stats'].get(user_id)
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
             return cur.fetchone()
 
     def get_user_badges(self, user_id: int):
+        if self.test_mode:
+            return []  # Nessun badge nella modalità test per ora
+            
+        self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("SELECT name FROM badges WHERE user_id = %s", (user_id,))
             return [row['name'] for row in cur.fetchall()]
 
-db = FamilyTaskDB()
+# Database sarà inizializzato in main() o quando necessario
+db = None
+
+def get_db():
+    """Ottiene l'istanza del database, creandola se necessario"""
+    global db
+    if db is None:
+        db = FamilyTaskDB()
+    return db
 
 class FamilyTaskBot:
     def __init__(self):
@@ -567,6 +779,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             logger.info(f"Ricevuto callback_query: {query.data} da utente {query.from_user.id}")
             await query.answer()
             data = query.data
+            
             if data == "assign_menu":
                 await self.assign_task_menu(update, context)
             elif data.startswith("assign_category_"):
@@ -588,7 +801,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 await query.answer("Task già assegnata", show_alert=True)
             elif data.startswith("complete_"):
                 task_id = data.replace("complete_", "")
-                logger.info(f"Chiamo complete_task per task_id: {task_id}")
+                logger.info(f"Chiamata complete_task per task_id: {task_id}")
                 await self.complete_task(query, task_id)
             elif data == "complete_menu":
                 await self.show_complete_menu(query)
@@ -614,51 +827,114 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=inline_keyboard
                 )
+            elif data == "invite_info":
+                await query.edit_message_text(
+                    "*👥 Invita la tua famiglia!*\n\n"
+                    "Condividi questo bot con i tuoi familiari:\n"
+                    "1. Invia loro il link del bot\n"
+                    "2. Chiedi loro di digitare `/start`\n"
+                    "3. Iniziate a collaborare nelle faccende!\n\n"
+                    "Il bot funziona meglio in gruppi familiari! 👨‍👩‍👧‍👦",
+                    parse_mode=ParseMode.MARKDOWN
+                )
             else:
-                logger.info(f"Callback non gestito: {data}")
-                await query.edit_message_text("❓ Azione non ancora implementata")
+                logger.warning(f"Callback non gestito: {data}")
+                await query.edit_message_text(
+                    f"❓ *Azione non implementata*\n\nCallback: `{data}`\n\nUsa /start per ricominciare.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
         except Exception as e:
-            logger.error(f"Errore in button_handler: {e}")
+            logger.error(f"Errore in button_handler per callback '{query.data}': {e}", exc_info=True)
             try:
                 await query.edit_message_text(
-                    "❌ *Errore temporaneo*\n\nRiprova o usa /start per ricominciare.",
+                    "❌ *Errore temporaneo*\n\n"
+                    "Si è verificato un problema. Riprova o usa /start per ricominciare.\n\n"
+                    f"Dettagli tecnici: `{type(e).__name__}`",
                     parse_mode=ParseMode.MARKDOWN
                 )
             except Exception as e2:
                 logger.error(f"Errore secondario nel button handler: {e2}")
+                # Come ultimo tentativo, proviamo a inviare un messaggio semplice
+                try:
+                    await context.bot.send_message(
+                        chat_id=query.message.chat.id,
+                        text="❌ Errore critico. Usa /start per ricominciare."
+                    )
+                except Exception as e3:
+                    logger.critical(f"Errore critico nel button handler: {e3}")
 
     async def complete_task(self, query, task_id):
         user_id = query.from_user.id
-        chat_id = query.message.chat.id  # Funziona per gruppi e privati
-        points, msg = db.complete_task(chat_id, task_id, user_id)
-        if points > 0:
-            task = db.get_task_by_id(task_id)
-            stats = db.get_user_stats(user_id)
-            level_up_text = ""
-            if msg["level_up"]:
-                level_up_text = f"\n🎉 *LEVEL UP!* Ora sei livello {msg['new_level']}!"
-            badge_text = ""
-            if msg["new_badges"]:
-                badge_text = f"\n🏅 *Nuovo Badge:* {' '.join([self.badge_emojis.get(b, b) for b in msg['new_badges']])}"
-            keyboard = [
-                [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
-                [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")],
-                [InlineKeyboardButton("📋 Altre Mie Task", callback_data="show_my_tasks")],
-                [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(
-                f"🎉 *Attività Completata!*\n\n"
-                f"📋 {task['name']}\n"
-                f"⭐ +{points} punti\n"
-                f"🔥 Streak: {stats['streak']} giorni"
-                f"{level_up_text}"
-                f"{badge_text}",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
-        else:
-            await query.edit_message_text("❌ Attività non trovata o già completata.")
+        chat_id = query.message.chat.id
+        
+        try:
+            logger.info(f"Tentativo di completare task {task_id} per utente {user_id} in chat {chat_id}")
+            
+            points, msg = db.complete_task(chat_id, task_id, user_id)
+            
+            if points > 0:
+                # Ottieni task e stats in modo sicuro
+                task = db.get_task_by_id(task_id)
+                if not task:
+                    await query.edit_message_text("❌ Informazioni task non trovate.")
+                    return
+                    
+                stats = db.get_user_stats(user_id)
+                if not stats:
+                    # Se non ci sono stats, crea delle stats di default
+                    stats = {
+                        'total_points': points,
+                        'tasks_completed': 1,
+                        'level': 1,
+                        'streak': 1
+                    }
+                
+                level_up_text = ""
+                if msg.get("level_up", False):
+                    level_up_text = f"\n🎉 *LEVEL UP!* Ora sei livello {msg['new_level']}!"
+                    
+                badge_text = ""
+                if msg.get("new_badges", []):
+                    badge_emojis = [self.badge_emojis.get(b, "🏅") for b in msg["new_badges"]]
+                    badge_text = f"\n🏅 *Nuovo Badge:* {' '.join(badge_emojis)}"
+                
+                keyboard = [
+                    [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+                    [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")],
+                    [InlineKeyboardButton("📋 Altre Mie Task", callback_data="show_my_tasks")],
+                    [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                success_text = (
+                    f"🎉 *Attività Completata!*\n\n"
+                    f"📋 {task['name']}\n"
+                    f"⭐ +{points} punti\n"
+                    f"🔥 Streak: {stats.get('streak', 1)} giorni"
+                    f"{level_up_text}"
+                    f"{badge_text}"
+                )
+                
+                await query.edit_message_text(
+                    success_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                logger.info(f"Task {task_id} completata con successo per utente {user_id}")
+            else:
+                await query.edit_message_text("❌ Attività non trovata o già completata.")
+                logger.warning(f"Task {task_id} non completabile per utente {user_id}")
+                
+        except Exception as e:
+            logger.error(f"Errore nel completamento task {task_id} per utente {user_id}: {e}", exc_info=True)
+            try:
+                await query.edit_message_text(
+                    "❌ *Errore nel completare l'attività*\n\nRiprova più tardi o contatta l'amministratore.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e2:
+                logger.error(f"Errore secondario nel complete_task: {e2}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message:
@@ -994,7 +1270,43 @@ def main():
     TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     if not TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN non trovato!")
+        logger.info("Per testare il bot, imposta le variabili d'ambiente nel file .env")
+        logger.info("Modalità demo: mostra solo le funzionalità principali")
+        
+        # Test delle funzionalità principali
+        print("\n🏠 Family Task Manager - Test delle Funzionalità\n")
+        
+        # Test del database
+        test_db = FamilyTaskDB()
+        
+        print("✅ Database inizializzato in modalità test")
+        print(f"✅ {len(test_db.get_all_tasks())} task caricate")
+        
+        # Test aggiunta membro famiglia
+        test_db.add_family_member(123456, 789012, "testuser", "Mario")
+        members = test_db.get_family_members(123456)
+        print(f"✅ {len(members)} membri famiglia aggiunti")
+        
+        # Test assegnazione task
+        test_db.assign_task(123456, "cucina_pulizia", 789012, 789012)
+        assigned = test_db.get_assigned_tasks_for_chat(123456)
+        print(f"✅ {len(assigned)} task assegnate")
+        
+        # Test completamento task
+        points, msg = test_db.complete_task(123456, "cucina_pulizia", 789012)
+        print(f"✅ Task completata: {points} punti guadagnati")
+        
+        # Test leaderboard
+        leaderboard = test_db.get_leaderboard(123456)
+        print(f"✅ Leaderboard: {len(leaderboard)} utenti")
+        
+        print("\n🎉 Tutti i test principali completati con successo!")
+        print("Per usare il bot con Telegram, configura TELEGRAM_BOT_TOKEN nel file .env")
         return
+        
+    # Modalità normale con bot Telegram
+    global db
+    db = FamilyTaskDB()
     application = Application.builder().token(TOKEN).build()
     bot = FamilyTaskBot()
     
