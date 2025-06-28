@@ -1858,3 +1858,24 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 )
             except Exception as e2:
                 logger.critical(f"Errore critico nel fallback di show_complete_menu: {e2}")
+
+if __name__ == "__main__":
+    db = get_db()
+    bot = FamilyTaskBot()
+    application = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).build()
+
+    # Comandi principali
+    application.add_handler(CommandHandler("start", bot.start))
+    application.add_handler(CommandHandler("help", bot.help_command))
+    application.add_handler(CommandHandler("tasks", bot.show_tasks))
+    application.add_handler(CommandHandler("mytasks", bot.my_tasks))
+    application.add_handler(CommandHandler("leaderboard", bot.leaderboard))
+    application.add_handler(CommandHandler("stats", bot.stats))
+
+    # Messaggi testuali (menu reply)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    # Callback bottoni inline
+    application.add_handler(CallbackQueryHandler(bot.button_handler))
+
+    logger.info("Family Task Manager Bot avviato!")
+    application.run_polling()
