@@ -533,7 +533,62 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             text += f"- {t['name']} ({t['points']} pt)\n"
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
-    # Aggiorna button_handler per gestire i nuovi callback
+    async def show_my_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE = None, query=None):
+        # Permette sia l'uso da comando che da callback
+        if update and update.effective_user:
+            user_id = update.effective_user.id
+            send_func = update.message.reply_text if update.message else None
+        elif query:
+            user_id = query.from_user.id
+            send_func = query.edit_message_text
+        else:
+            return
+        if user_id not in db.data['user_stats']:
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Prima Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📋 Vedi Task Disponibili", callback_data="show_all_tasks")],
+                [InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            if send_func:
+                await send_func(
+                    "📊 *Non hai ancora statistiche!*\n\nCompleta la prima attività per iniziare a guadagnare punti e vedere le tue stats.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+            return
+        stats = db.data['user_stats'][user_id]
+        badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in stats['badges']])
+        current_level_points = stats['total_points'] % 100
+        points_to_next_level = 100 - current_level_points
+        progress_bar = "▓" * (current_level_points // 10) + "░" * (10 - (current_level_points // 10))
+        stats_text = f"""
+*📊 Le Tue Statistiche*
+
+👤 *Livello:* {stats['level']} 
+⭐ *Punti Totali:* {stats['total_points']}
+✅ *Task Completate:* {stats['tasks_completed']}
+🔥 *Streak Attuale:* {stats['streak']} giorni
+
+*📈 Progresso Livello {stats['level']} → {stats['level'] + 1}:*
+{progress_bar} {current_level_points}/100
+({points_to_next_level} punti al prossimo livello)
+
+🏅 *Badge Ottenuti:*
+{badges_str if badges_str else 'Nessun badge ancora 😢'}
+        """
+        keyboard = [
+            [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
+            [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")],
+            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        if send_func:
+            await send_func(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        elif query:
+            await query.edit_message_text(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         try:
@@ -559,6 +614,15 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 task_id = data.replace("complete_", "")
                 logger.info(f"Chiamo complete_task per task_id: {task_id}")
                 await self.complete_task(query, task_id)
+            elif data == "show_my_stats":
+                await self.show_my_stats(None, None, query=query)
+            elif data == "main_menu":
+                keyboard = self.get_main_menu_keyboard()
+                await query.edit_message_text(
+                    "*🏠 Menu Principale*\n\nSeleziona un'azione:",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=keyboard
+                )
             else:
                 logger.info(f"Callback non gestito: {data}")
                 await query.edit_message_text("❓ Azione non ancora implementata")
