@@ -180,7 +180,22 @@ class FamilyTaskDB:
                 JOIN tasks t ON at.task_id = t.id
                 WHERE at.chat_id = %s AND at.assigned_to = %s
             """, (chat_id, user_id))
-            return cur.fetchall()
+            rows = cur.fetchall()
+            # Normalizza e logga per debug
+            result = []
+            for row in rows:
+                # Se row è dict-like, ok, altrimenti converti
+                if isinstance(row, dict):
+                    task = row
+                else:
+                    # Se è una tupla, mappa alle colonne
+                    columns = [desc[0] for desc in cur.description]
+                    task = dict(zip(columns, row))
+                if 'task_id' not in task:
+                    logger.error(f"Task senza 'task_id': {task}")
+                result.append(task)
+            logger.info(f"get_user_assigned_tasks restituisce: {result}")
+            return result
 
     def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
         if self.test_mode:
