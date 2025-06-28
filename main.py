@@ -1012,46 +1012,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_func(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
-    async def choose_assign_target(self, query, task_id):
-        """Mostra i membri della famiglia per scegliere a chi assegnare la task"""
-        chat_id = query.message.chat.id
-        members = db.get_family_members(chat_id)
-        task = db.get_task_by_id(task_id)
-        
-        if not task:
-            await query.edit_message_text("❌ Task non trovata!")
-            return
-            
-        keyboard = []
-        # Opzione per assegnare a se stesso
-        keyboard.append([
-            InlineKeyboardButton(f"🫵 Assegna a me", callback_data=f"assign_self_{task_id}")
-        ])
-        
-        # Opzioni per assegnare ad altri membri
-        for member in members:
-            if member['user_id'] != query.from_user.id:  # Escludi se stesso
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"👤 {member['first_name']}", 
-                        callback_data=f"assign_{task_id}_{member['user_id']}"
-                    )
-                ])
-        
-        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"*A chi vuoi assegnare:*\n\n📋 {task['name']}\n⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=reply_markup
-        )
-
     async def handle_assign(self, query, task_id, target_user_id):
         """Gestisce l'assegnazione effettiva della task"""
         chat_id = query.message.chat.id
         assigned_by = query.from_user.id
-        
         try:
             # Verifica se la task è già assegnata
             existing = db.get_assigned_tasks_for_chat(chat_id)
@@ -1059,14 +1023,11 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 if assigned['task_id'] == task_id and assigned['assigned_to'] == target_user_id:
                     await query.edit_message_text("❌ Questa task è già assegnata a questo utente!")
                     return
-            
             # Assegna la task
             db.assign_task(chat_id, task_id, target_user_id, assigned_by)
-            
             # Ottieni informazioni per la conferma
             task = db.get_task_by_id(task_id)
             target_name = "te stesso" if target_user_id == assigned_by else "un membro della famiglia"
-            
             # Cerca il nome del target se diverso dall'assegnante
             if target_user_id != assigned_by:
                 members = db.get_family_members(chat_id)
@@ -1074,14 +1035,12 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                     if member['user_id'] == target_user_id:
                         target_name = member['first_name']
                         break
-            
             keyboard = [
                 [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
                 [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
             await query.edit_message_text(
                 f"✅ *Task Assegnata!*\n\n"
                 f"📋 {task['name']}\n"
@@ -1091,16 +1050,44 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=reply_markup
             )
-            
         except Exception as e:
             logger.error(f"Errore nell'assegnazione task: {e}")
             await query.edit_message_text("❌ Errore nell'assegnazione della task. Riprova.")
 
+    async def choose_assign_target(self, query, task_id):
+        """Mostra i membri della famiglia per scegliere a chi assegnare la task"""
+        chat_id = query.message.chat.id
+        members = db.get_family_members(chat_id)
+        task = db.get_task_by_id(task_id)
+        if not task:
+            await query.edit_message_text("❌ Task non trovata!")
+            return
+        keyboard = []
+        # Opzione per assegnare a se stesso
+        keyboard.append([
+            InlineKeyboardButton(f"🫵 Assegna a me", callback_data=f"assign_self_{task_id}")
+        ])
+        # Opzioni per assegnare ad altri membri
+        for member in members:
+            if member['user_id'] != query.from_user.id:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"👤 {member['first_name']}",
+                        callback_data=f"assign_{task_id}_{member['user_id']}"
+                    )
+                ])
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"*A chi vuoi assegnare:*\n\n📋 {task['name']}\n⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+
     async def send_task_reminders(self, application):
         """Invia promemoria per le task in scadenza"""
         try:
-            # TODO: Implementare logica di promemoria
-            # Per ora lasciamo vuoto per non causare errori
+            # Da implementare: logica di promemoria
             pass
         except Exception as e:
             logger.error(f"Errore nei promemoria: {e}")
@@ -1110,7 +1097,6 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         user_id = query.from_user.id
         chat_id = query.message.chat.id
         my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
-        
         if not my_tasks:
             keyboard = [
                 [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
@@ -1124,31 +1110,25 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 reply_markup=reply_markup
             )
             return
-            
         tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
         keyboard = []
-        
         for i, task in enumerate(my_tasks, 1):
             due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
             days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
             urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
-            
             tasks_text += f"*{i}. {task['name']}*\n"
             tasks_text += f"⭐ {task['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
             tasks_text += f"⏱️ Tempo stimato: ~{task['time_minutes']} minuti\n\n"
-            
             button_text = f"✅ {task['name'][:15]}..."
             keyboard.append([InlineKeyboardButton(
                 button_text,
                 callback_data=f"complete_{task['task_id']}"
             )])
-            
         keyboard.extend([
             [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
             [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
             [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
         ])
-        
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
