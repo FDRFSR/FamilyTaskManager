@@ -54,3 +54,11 @@ CREATE TABLE IF NOT EXISTS user_stats (
     streak INTEGER DEFAULT 0,
     last_task_date TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS badges (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    name TEXT,
+    earned_date TIMESTAMP DEFAULT NOW(),
+    UNIQUE(user_id, name)
+);

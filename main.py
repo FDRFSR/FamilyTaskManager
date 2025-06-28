@@ -70,10 +70,17 @@ class FamilyTaskDB:
 
     def add_family_member(self, chat_id: int, user_id: int, username: str, first_name: str):
         with self.conn, self.conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO family_members (chat_id, user_id, username, first_name, joined_date) VALUES (%s, %s, %s, %s, %s)",
-                (chat_id, user_id, username, first_name, datetime.now())
-            )
+            # Crea la famiglia se non esiste
+            cur.execute("INSERT INTO families (chat_id) VALUES (%s) ON CONFLICT (chat_id) DO NOTHING", (chat_id,))
+            
+            # Aggiungi il membro della famiglia
+            cur.execute("""
+                INSERT INTO family_members (chat_id, user_id, username, first_name, joined_date) 
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (chat_id, user_id) DO UPDATE SET
+                username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name
+            """, (chat_id, user_id, username, first_name, datetime.now()))
             self.conn.commit()
 
     def get_family_members(self, chat_id: int):
@@ -115,88 +122,117 @@ class FamilyTaskDB:
 
     def complete_task(self, chat_id: int, task_id: str, user_id: int):
         with self.conn, self.conn.cursor() as cur:
+            # Verifica che la task sia assegnata all'utente
             cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
             task_data = cur.fetchone()
             if not task_data:
                 return 0, {"level_up": False, "new_level": None, "new_badges": []}
-            points = task_data['points']
+            
+            # Ottieni informazioni della task
+            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            task_info = cur.fetchone()
+            if not task_info:
+                return 0, {"level_up": False, "new_level": None, "new_badges": []}
+                
+            points = task_info['points']
             msg = {"level_up": False, "new_level": None, "new_badges": []}
+            
+            # Ottieni o crea statistiche utente
             cur.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
             stats = cur.fetchone()
+            
             if stats:
                 old_level = stats['level']
-                new_level = (stats['total_points'] + points) // 100 + 1
-                cur.execute(
-                    "UPDATE user_stats SET total_points = total_points + %s, tasks_completed = tasks_completed + 1, level = %s, last_task_date = %s WHERE user_id = %s",
-                    (points, new_level, datetime.now(), user_id)
-                )
+                new_total_points = stats['total_points'] + points
+                new_level = new_total_points // 100 + 1
+                new_tasks_completed = stats['tasks_completed'] + 1
+                
+                # Calcola streak (semplificato per ora)
+                new_streak = stats['streak'] + 1
+                
+                cur.execute("""
+                    UPDATE user_stats 
+                    SET total_points = %s, tasks_completed = %s, level = %s, 
+                        streak = %s, last_task_date = %s 
+                    WHERE user_id = %s
+                """, (new_total_points, new_tasks_completed, new_level, new_streak, datetime.now(), user_id))
+                
                 if new_level > old_level:
                     msg["level_up"] = True
                     msg["new_level"] = new_level
-                cur.execute("SELECT * FROM badges WHERE user_id = %s", (user_id,))
-                user_badges = cur.fetchall()
-                badge_names = [b['name'] for b in user_badges]
-                if stats['tasks_completed'] + 1 >= 10 and 'rookie' not in badge_names:
+                    
+                # Controlla badge
+                if new_tasks_completed >= 10:
+                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'rookie'))
+                    if not cur.fetchone():
+                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'rookie'))
+                        msg["new_badges"].append('rookie')
+                        
+                if new_tasks_completed >= 50:
+                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'expert'))
+                    if not cur.fetchone():
+                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'expert'))
+                        msg["new_badges"].append('expert')
+                        
+                if new_tasks_completed >= 100:
+                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'master'))
+                    if not cur.fetchone():
+                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'master'))
+                        msg["new_badges"].append('master')
+                        
+                if new_streak >= 7:
+                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'week_warrior'))
+                    if not cur.fetchone():
+                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'week_warrior'))
+                        msg["new_badges"].append('week_warrior')
+                        
+                if new_streak >= 30:
+                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'month_champion'))
+                    if not cur.fetchone():
+                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'month_champion'))
+                        msg["new_badges"].append('month_champion')
+                        
+                if new_total_points >= 500:
+                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'point_collector'))
+                    if not cur.fetchone():
+                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'point_collector'))
+                        msg["new_badges"].append('point_collector')
+            else:
+                # Crea nuove statistiche
+                cur.execute("""
+                    INSERT INTO user_stats (user_id, total_points, tasks_completed, level, streak, last_task_date)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (user_id, points, 1, 1, 1, datetime.now()))
+                
+                if points >= 10:
                     cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'rookie'))
                     msg["new_badges"].append('rookie')
-                if stats['tasks_completed'] + 1 >= 50 and 'expert' not in badge_names:
-                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'expert'))
-                    msg["new_badges"].append('expert')
-                if stats['tasks_completed'] + 1 >= 100 and 'master' not in badge_names:
-                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'master'))
-                    msg["new_badges"].append('master')
-                if stats['streak'] + 1 >= 7 and 'week_warrior' not in badge_names:
-                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'week_warrior'))
-                    msg["new_badges"].append('week_warrior')
-                if stats['streak'] + 1 >= 30 and 'month_champion' not in badge_names:
-                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'month_champion'))
-                    msg["new_badges"].append('month_champion')
-                if stats['total_points'] + points >= 500 and 'point_collector' not in badge_names:
-                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'point_collector'))
-                    msg["new_badges"].append('point_collector')
-            cur.execute(
-                "INSERT INTO completed_tasks (chat_id, task_id, assigned_to, completed_date, points_earned) VALUES (%s, %s, %s, %s, %s)",
-                (chat_id, task_id, user_id, datetime.now(), points)
-            )
+            
+            # Sposta la task da assigned a completed
+            cur.execute("""
+                INSERT INTO completed_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, completed_date, points_earned)
+                SELECT chat_id, task_id, assigned_to, assigned_by, assigned_date, %s, %s
+                FROM assigned_tasks 
+                WHERE chat_id = %s AND task_id = %s AND assigned_to = %s
+            """, (datetime.now(), points, chat_id, task_id, user_id))
+            
             cur.execute("DELETE FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
             self.conn.commit()
             return points, msg
-        return 0, {"level_up": False, "new_level": None, "new_badges": []}
 
     def get_leaderboard(self, chat_id: int):
         with self.conn, self.conn.cursor() as cur:
             cur.execute("""
-                SELECT fm.user_id, fm.first_name, us.total_points, us.level, us.tasks_completed, us.streak
+                SELECT fm.user_id, fm.first_name, 
+                       COALESCE(us.total_points, 0) as total_points, 
+                       COALESCE(us.level, 1) as level, 
+                       COALESCE(us.tasks_completed, 0) as tasks_completed, 
+                       COALESCE(us.streak, 0) as streak
                 FROM family_members fm
-                JOIN user_stats us ON fm.user_id = us.user_id
+                LEFT JOIN user_stats us ON fm.user_id = us.user_id
                 WHERE fm.chat_id = %s
-                ORDER BY us.total_points DESC
+                ORDER BY COALESCE(us.total_points, 0) DESC
             """, (chat_id,))
-            return cur.fetchall()
-
-    def get_user_assigned_tasks(self, chat_id: int, user_id: int):
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT at.task_id, at.due_date, t.name, t.points, t.time_minutes
-                FROM assigned_tasks at
-                JOIN tasks t ON at.task_id = t.id
-                WHERE at.chat_id = %s AND at.assigned_to = %s
-            """, (chat_id, user_id))
-            return cur.fetchall()
-
-    def get_task_by_id(self, task_id: str):
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-            return cur.fetchone()
-
-    def get_all_tasks(self):
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("SELECT * FROM tasks")
-            return cur.fetchall()
-
-    def get_assigned_tasks_for_chat(self, chat_id: int):
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s", (chat_id,))
             return cur.fetchall()
 
     def get_user_stats(self, user_id: int):
@@ -544,9 +580,10 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 await self.handle_assign(query, task_id, query.from_user.id)
             elif data.startswith("assign_"):
                 parts = data.split("_")
-                task_id = parts[1]
-                target_user_id = int(parts[2])
-                await self.handle_assign(query, task_id, target_user_id)
+                if len(parts) >= 3:
+                    task_id = parts[1]
+                    target_user_id = int(parts[2])
+                    await self.handle_assign(query, task_id, target_user_id)
             elif data == "none":
                 await query.answer("Task già assegnata", show_alert=True)
             elif data.startswith("complete_"):
@@ -555,10 +592,23 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 await self.complete_task(query, task_id)
             elif data == "show_my_stats":
                 await self.show_my_stats(None, None, query=query)
+            elif data == "show_my_tasks":
+                await self.show_my_tasks_inline(query)
+            elif data == "show_leaderboard":
+                await self.show_leaderboard_inline(query)
+            elif data == "show_all_tasks":
+                await self.show_all_tasks_inline(query)
             elif data == "main_menu":
                 inline_keyboard = self.get_quick_actions_inline()
                 await query.edit_message_text(
                     "*🏠 Menu Principale*\n\nSeleziona un'azione:",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=inline_keyboard
+                )
+            elif data == "refresh_menu":
+                inline_keyboard = self.get_quick_actions_inline()
+                await query.edit_message_text(
+                    "*🏠 Menu Aggiornato*\n\nSeleziona un'azione:",
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=inline_keyboard
                 )
@@ -684,6 +734,215 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_func(stats_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
+    async def choose_assign_target(self, query, task_id):
+        """Mostra i membri della famiglia per scegliere a chi assegnare la task"""
+        chat_id = query.message.chat.id
+        members = db.get_family_members(chat_id)
+        task = db.get_task_by_id(task_id)
+        
+        if not task:
+            await query.edit_message_text("❌ Task non trovata!")
+            return
+            
+        keyboard = []
+        # Opzione per assegnare a se stesso
+        keyboard.append([
+            InlineKeyboardButton(f"🫵 Assegna a me", callback_data=f"assign_self_{task_id}")
+        ])
+        
+        # Opzioni per assegnare ad altri membri
+        for member in members:
+            if member['user_id'] != query.from_user.id:  # Escludi se stesso
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"👤 {member['first_name']}", 
+                        callback_data=f"assign_{task_id}_{member['user_id']}"
+                    )
+                ])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"*A chi vuoi assegnare:*\n\n📋 {task['name']}\n⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+
+    async def handle_assign(self, query, task_id, target_user_id):
+        """Gestisce l'assegnazione effettiva della task"""
+        chat_id = query.message.chat.id
+        assigned_by = query.from_user.id
+        
+        try:
+            # Verifica se la task è già assegnata
+            existing = db.get_assigned_tasks_for_chat(chat_id)
+            for assigned in existing:
+                if assigned['task_id'] == task_id and assigned['assigned_to'] == target_user_id:
+                    await query.edit_message_text("❌ Questa task è già assegnata a questo utente!")
+                    return
+            
+            # Assegna la task
+            db.assign_task(chat_id, task_id, target_user_id, assigned_by)
+            
+            # Ottieni informazioni per la conferma
+            task = db.get_task_by_id(task_id)
+            target_name = "te stesso" if target_user_id == assigned_by else "un membro della famiglia"
+            
+            # Cerca il nome del target se diverso dall'assegnante
+            if target_user_id != assigned_by:
+                members = db.get_family_members(chat_id)
+                for member in members:
+                    if member['user_id'] == target_user_id:
+                        target_name = member['first_name']
+                        break
+            
+            keyboard = [
+                [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
+                [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"✅ *Task Assegnata!*\n\n"
+                f"📋 {task['name']}\n"
+                f"👤 Assegnata a: {target_name}\n"
+                f"⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min\n"
+                f"📅 Scadenza: 3 giorni",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            logger.error(f"Errore nell'assegnazione task: {e}")
+            await query.edit_message_text("❌ Errore nell'assegnazione della task. Riprova.")
+
+    async def send_task_reminders(self, application):
+        """Invia promemoria per le task in scadenza"""
+        try:
+            # TODO: Implementare logica di promemoria
+            # Per ora lasciamo vuoto per non causare errori
+            pass
+        except Exception as e:
+            logger.error(f"Errore nei promemoria: {e}")
+
+    async def show_my_tasks_inline(self, query):
+        """Versione inline di my_tasks per i callback"""
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+        my_tasks = db.get_user_assigned_tasks(chat_id, user_id)
+        
+        if not my_tasks:
+            keyboard = [
+                [InlineKeyboardButton("🎯 Assegna Nuova Task", callback_data="assign_menu")],
+                [InlineKeyboardButton("📋 Vedi Tutte le Task", callback_data="show_all_tasks")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "📝 *Non hai attività assegnate al momento!*\n\nVuoi assegnarne una a te stesso o vedere tutte le task disponibili?",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+            
+        tasks_text = f"*📋 Le Tue Attività ({len(my_tasks)}):*\n\n"
+        keyboard = []
+        
+        for i, task in enumerate(my_tasks, 1):
+            due_str = task['due_date'].strftime("%d/%m") if task['due_date'] else "-"
+            days_left = (task['due_date'] - datetime.now()).days if task['due_date'] else 99
+            urgency = "🔴" if days_left <= 1 else "🟡" if days_left <= 2 else "🟢"
+            
+            tasks_text += f"*{i}. {task['name']}*\n"
+            tasks_text += f"⭐ {task['points']} punti | 📅 Scadenza: {due_str} {urgency}\n"
+            tasks_text += f"⏱️ Tempo stimato: ~{task['time_minutes']} minuti\n\n"
+            
+            button_text = f"✅ {task['name'][:15]}..."
+            keyboard.append([InlineKeyboardButton(
+                button_text,
+                callback_data=f"complete_{task['task_id']}"
+            )])
+            
+        keyboard.extend([
+            [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
+    async def show_leaderboard_inline(self, query):
+        """Versione inline di leaderboard per i callback"""
+        chat_id = query.message.chat.id
+        leaderboard = db.get_leaderboard(chat_id)
+        
+        if not leaderboard:
+            keyboard = [
+                [InlineKeyboardButton("👥 Invita Famiglia", callback_data="invite_info")],
+                [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "👥 *Nessun membro registrato nella famiglia!*\n\nInvita i tuoi familiari a usare il bot con `/start`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            return
+            
+        leaderboard_text = f"*🏆 CLASSIFICA FAMIGLIA ({len(leaderboard)} membri)*\n\n"
+        positions = ["🥇", "🥈", "🥉"]
+        
+        for i, member in enumerate(leaderboard):
+            position = positions[i] if i < 3 else f"{i+1}°"
+            badges = db.get_user_badges(member['user_id'])
+            badges_str = " ".join([self.badge_emojis.get(badge, "🏅") for badge in badges])
+            
+            leaderboard_text += f"{position} *{member['first_name']}*\n"
+            leaderboard_text += f"⭐ {member['total_points']} punti | 📊 Livello {member['level']}\n"
+            leaderboard_text += f"✅ {member['tasks_completed']} task | 🔥 Streak: {member['streak']}\n"
+            if badges_str:
+                leaderboard_text += f"🏅 {badges_str}\n"
+            leaderboard_text += "\n"
+            
+        keyboard = [
+            [InlineKeyboardButton("📊 Mie Statistiche", callback_data="show_my_stats")],
+            [InlineKeyboardButton("🎯 Assegna Task", callback_data="assign_menu")],
+            [InlineKeyboardButton("🔄 Aggiorna", callback_data="show_leaderboard")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(leaderboard_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
+    async def show_all_tasks_inline(self, query):
+        """Versione inline di show_tasks per i callback"""
+        tasks = db.get_all_tasks()
+        
+        # Organizza le task per categoria
+        cat_map = {k: [] for k in self.TASK_CATEGORIES.keys()}
+        for task in tasks:
+            for catid, cat in self.TASK_CATEGORIES.items():
+                if task['id'] in cat['tasks']:
+                    cat_map[catid].append(task)
+                    
+        tasks_text = "*📋 Attività Disponibili:*\n\n"
+        for catid, cat in self.TASK_CATEGORIES.items():
+            tasks_text += f"*{cat['label']}*\n"
+            for task in cat_map[catid]:
+                tasks_text += f"  {task['name']}\n"
+                tasks_text += f"  ⭐ {task['points']} punti | ⏱️ ~{task['time_minutes']} min\n"
+            tasks_text += "\n"
+            
+        keyboard = [
+            [InlineKeyboardButton("🎯 Assegna Attività", callback_data="assign_menu")],
+            [InlineKeyboardButton("✅ Completa Attività", callback_data="complete_menu")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(tasks_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
 def main():
     TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     if not TOKEN:
@@ -691,6 +950,7 @@ def main():
         return
     application = Application.builder().token(TOKEN).build()
     bot = FamilyTaskBot()
+    
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error("Exception while handling an update:", exc_info=context.error)
         if update and hasattr(update, 'effective_chat') and update.effective_chat:
@@ -701,6 +961,10 @@ def main():
                 )
             except Exception as e:
                 logger.error(f"Errore nell'invio del messaggio di errore: {e}")
+    
+    async def reminder_job(context):
+        await bot.send_task_reminders(context.application)
+    
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("tasks", bot.show_tasks))
@@ -710,11 +974,12 @@ def main():
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    
+    # Aggiungi job per i promemoria (ogni ora)
+    application.job_queue.run_repeating(reminder_job, interval=3600, first=10)
+    
     logger.info("🏠 Family Task Bot avviato!")
     application.run_polling()
-    async def reminder_job():
-        await bot.send_task_reminders(application)
-    application.job_queue.run_repeating(lambda ctx: reminder_job(), interval=3600, first=10)
 
 if __name__ == '__main__':
     main()
