@@ -710,8 +710,6 @@ def main():
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
-    application.add_handler(CommandHandler("completed", bot.show_completed_tasks))
-    application.add_handler(CommandHandler("search", bot.search_tasks))
     logger.info("🏠 Family Task Bot avviato!")
     application.run_polling()
     async def reminder_job():
