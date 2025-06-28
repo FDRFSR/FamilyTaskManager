@@ -1022,8 +1022,15 @@ def main():
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
-    # Aggiungi job per i promemoria (ogni ora)
-    application.job_queue.run_repeating(reminder_job, interval=3600, first=10)
+    # Aggiungi job per i promemoria (ogni ora) solo se JobQueue è disponibile
+    try:
+        if application.job_queue:
+            application.job_queue.run_repeating(reminder_job, interval=3600, first=10)
+            logger.info("JobQueue configurato per i promemoria")
+        else:
+            logger.warning("JobQueue non disponibile - promemoria disabilitati")
+    except Exception as e:
+        logger.warning(f"Errore nell'impostazione JobQueue: {e}")
     
     logger.info("🏠 Family Task Bot avviato!")
     application.run_polling()
