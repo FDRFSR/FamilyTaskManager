@@ -1027,6 +1027,9 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
             db.assign_task(chat_id, task_id, target_user_id, assigned_by)
             # Ottieni informazioni per la conferma
             task = db.get_task_by_id(task_id)
+            if not task:
+                await query.edit_message_text("❌ Task non trovata!")
+                return
             target_name = "te stesso" if target_user_id == assigned_by else "un membro della famiglia"
             # Cerca il nome del target se diverso dall'assegnante
             if target_user_id != assigned_by:
