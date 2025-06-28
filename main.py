@@ -408,17 +408,77 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         """
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
+    async def assign_task_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        tasks = db.data['tasks']
+        keyboard = []
+        for task_id, task in tasks.items():
+            keyboard.append([
+                InlineKeyboardButton(f"{task['name']} ({task['points']} pt)", callback_data=f"choose_task_{task_id}")
+            ])
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "*Seleziona una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                "*Seleziona una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+            )
+
+    async def choose_assign_target(self, query, task_id):
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+        members = db.get_family_members(chat_id)
+        keyboard = [
+            [InlineKeyboardButton("A me stesso", callback_data=f"assign_self_{task_id}")]
+        ]
+        for member in members:
+            if member['user_id'] != user_id:
+                keyboard.append([
+                    InlineKeyboardButton(f"A {member['first_name']}", callback_data=f"assign_{task_id}_{member['user_id']}")
+                ])
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"*A chi vuoi assegnare la task?*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+        )
+
+    async def handle_assign(self, query, task_id, target_user_id):
+        chat_id = query.message.chat.id
+        assigned_by = query.from_user.id
+        db.assign_task(chat_id, task_id, target_user_id, assigned_by)
+        members = db.get_family_members(chat_id)
+        target_name = next((m['first_name'] for m in members if m['user_id'] == target_user_id), "")
+        await query.edit_message_text(
+            f"✅ Task assegnata a {target_name}!", parse_mode=ParseMode.MARKDOWN
+        )
+
+    # Aggiorna button_handler per gestire i nuovi callback
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         try:
             logger.info(f"Ricevuto callback_query: {query.data} da utente {query.from_user.id}")
             await query.answer()
             data = query.data
-            if data.startswith("complete_"):
+            if data == "assign_menu":
+                await self.assign_task_menu(update, context)
+            elif data.startswith("choose_task_"):
+                task_id = data.replace("choose_task_", "")
+                await self.choose_assign_target(query, task_id)
+            elif data.startswith("assign_self_"):
+                task_id = data.replace("assign_self_", "")
+                await self.handle_assign(query, task_id, query.from_user.id)
+            elif data.startswith("assign_"):
+                parts = data.split("_")
+                task_id = parts[1]
+                target_user_id = int(parts[2])
+                await self.handle_assign(query, task_id, target_user_id)
+            elif data.startswith("complete_"):
                 task_id = data.replace("complete_", "")
                 logger.info(f"Chiamo complete_task per task_id: {task_id}")
                 await self.complete_task(query, task_id)
-            # Qui puoi aggiungere tutte le altre azioni inline come vuoi!
             else:
                 logger.info(f"Callback non gestito: {data}")
                 await query.edit_message_text("❓ Azione non ancora implementata")
@@ -472,19 +532,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
         if text == "📋 Le Mie Task":
             await self.my_tasks(update, context)
         elif text == "🎯 Assegna Task":
-            inline_keyboard = [
-                [InlineKeyboardButton("🍽️ Cucina", callback_data="category_cucina")],
-                [InlineKeyboardButton("🧹 Pulizie", callback_data="category_pulizie")],
-                [InlineKeyboardButton("👕 Bucato & Casa", callback_data="category_bucato")],
-                [InlineKeyboardButton("🌱 Esterni & Altro", callback_data="category_esterni")],
-                [InlineKeyboardButton("📋 Tutte le Task", callback_data="assign_all_tasks")]
-            ]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard)
-            await update.message.reply_text(
-                "*🎯 Seleziona Categoria per Assegnare Task:*",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=reply_markup
-            )
+            await self.assign_task_menu(update, context)
         elif text == "🏆 Classifica":
             await self.leaderboard(update, context)
         elif text == "📊 Statistiche":
