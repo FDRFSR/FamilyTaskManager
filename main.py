@@ -160,12 +160,22 @@ class FamilyTaskDB:
 
     def get_user_assigned_tasks(self, chat_id: int, user_id: int):
         if self.test_mode:
-            return []  # Per ora empty list nella modalità test
-            
+            # Modalità test: restituisci sempre la chiave 'task_id'
+            return [
+                {
+                    'task_id': k.split('_')[1],
+                    'due_date': v.get('due_date'),
+                    'name': self.test_data['tasks'][k.split('_')[1]]['name'] if k.split('_')[1] in self.test_data['tasks'] else '',
+                    'points': self.test_data['tasks'][k.split('_')[1]]['points'] if k.split('_')[1] in self.test_data['tasks'] else 0,
+                    'time_minutes': self.test_data['tasks'][k.split('_')[1]]['time_minutes'] if k.split('_')[1] in self.test_data['tasks'] else 0
+                }
+                for k, v in self.test_data['assigned_tasks'].items()
+                if v['chat_id'] == chat_id and v['assigned_to'] == user_id
+            ]
         self.ensure_connection()
         with self.conn, self.conn.cursor() as cur:
             cur.execute("""
-                SELECT at.task_id, at.due_date, t.name, t.points, t.time_minutes
+                SELECT at.task_id as task_id, at.due_date, t.name, t.points, t.time_minutes
                 FROM assigned_tasks at
                 JOIN tasks t ON at.task_id = t.id
                 WHERE at.chat_id = %s AND at.assigned_to = %s
