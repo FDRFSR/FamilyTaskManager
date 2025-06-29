@@ -620,38 +620,7 @@ def get_db():
 
 class FamilyTaskBot:
     def __init__(self):
-        self.badge_emojis = {
-            'rookie': '🥉',
-            'expert': '🥈',
-            'master': '🥇',
-            'week_warrior': '⚡',
-            'month_champion': '👑',
-            'point_collector': '💎'
-        }
-
-    # Mappa categorie e task
-    TASK_CATEGORIES = {
-        "cucina": {
-            "label": "🍽️ Cucina",
-            "tasks": ["cucina_pulizia", "lavastoviglie"]
-        },
-        "pulizie": {
-            "label": "🧹 Pulizie",
-            "tasks": ["bagno_pulizia", "aspirapolvere", "pavimenti", "finestre"]
-        },
-        "bucato": {
-            "label": "👕 Bucato",
-            "tasks": ["bucato", "stirare", "letti"]
-        },
-        "esterni": {
-            "label": "🌱 Esterni",
-            "tasks": ["giardino", "spazzatura"]
-        },
-        "commissioni": {
-            "label": "🛒 Commissioni",
-            "tasks": ["spesa"]
-        }
-    }
+        pass
 
     def get_main_menu_keyboard(self):
         keyboard = [
@@ -844,6 +813,7 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
     async def show_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.message:
             return
+            
         tasks = db.get_all_tasks()
         # Organizza le task per categoria
         cat_map = {k: [] for k in self.TASK_CATEGORIES.keys()}
