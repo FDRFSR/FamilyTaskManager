@@ -78,9 +78,14 @@ class FamilyTaskBot:
             await update.message.reply_text("Non hai task assegnate!")
             return
         text = "📝 *Le tue task assegnate:*\n\n"
+        keyboard = []
         for task in tasks:
             text += f"• {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)\n"
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+            keyboard.append([
+                InlineKeyboardButton(f"✅ Completa '{task['name']}'", callback_data=f"complete_{task['task_id']}")
+            ])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def assign_task_menu(self, update, context):
         chat_id = update.effective_chat.id
@@ -137,6 +142,17 @@ class FamilyTaskBot:
             await self.assign_task_menu(DummyUpdate(), context)
         elif data == "show_my_tasks":
             await self.my_tasks(update, context)
+        elif data.startswith("complete_"):
+            task_id = data.replace("complete_", "")
+            user_id = query.from_user.id
+            chat_id = query.message.chat.id
+            try:
+                # Simula completamento task (aggiungi logica reale se serve)
+                # Rimuovi l'assegnazione completata
+                db._assigned = [a for a in db._assigned if not (a['chat_id'] == chat_id and a['task_id'] == task_id and a['assigned_to'] == user_id)]
+                await query.edit_message_text("🎉 Task completata! Ottimo lavoro.")
+            except Exception as exc:
+                await query.edit_message_text(f"❌ Errore nel completamento: {exc}")
         else:
             await query.answer("Funzione non ancora implementata.")
 
