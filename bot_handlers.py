@@ -77,12 +77,52 @@ class FamilyTaskBot:
             text += f"• {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)\n"
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
+    async def assign_task_menu(self, update, context):
+        chat_id = update.effective_chat.id
+        tasks = db.get_all_tasks()
+        # Raggruppa per nome (categoria semplificata)
+        keyboard = []
+        for task in tasks:
+            keyboard.append([
+                InlineKeyboardButton(f"{task['name']} ({task['points']}pt)", callback_data=f"assign_{task['id']}")
+            ])
+        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("*Scegli una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
     async def button_handler(self, update, context):
         query = update.callback_query
         data = query.data
-        # Esempio: gestione callback principali
+        chat_id = query.message.chat.id
+        user_id = query.from_user.id
         if data == "main_menu":
             await query.edit_message_text("Menu principale. Usa i comandi o il menu.")
+        elif data.startswith("assign_"):
+            task_id = data.replace("assign_", "")
+            members = db.get_family_members(chat_id)
+            keyboard = []
+            for m in members:
+                keyboard.append([
+                    InlineKeyboardButton(f"👤 {m['first_name']}", callback_data=f"doassign_{task_id}_{m['user_id']}")
+                ])
+            keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            task = db.get_task_by_id(task_id)
+            await query.edit_message_text(
+                f"*A chi vuoi assegnare:*\n\n📋 {task['name']} ({task['points']}pt)",
+                parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        elif data.startswith("doassign_"):
+            _, task_id, target_id = data.split("_", 2)
+            try:
+                db.assign_task(chat_id, task_id, int(target_id), user_id)
+                await query.edit_message_text("✅ Task assegnata con successo!")
+            except ValueError:
+                await query.edit_message_text("❌ Task già assegnata a questo utente!")
+        elif data == "assign_menu":
+            # Torna al menu di scelta task
+            class DummyUpdate:
+                message = query.message
+            await self.assign_task_menu(DummyUpdate(), context)
         elif data == "show_my_tasks":
             await self.my_tasks(update, context)
         else:
@@ -90,7 +130,9 @@ class FamilyTaskBot:
 
     async def handle_message(self, update, context):
         text = update.message.text.lower()
-        if "task" in text:
+        if "assegna" in text:
+            await self.assign_task_menu(update, context)
+        elif "task" in text:
             await self.show_tasks(update, context)
         elif "classifica" in text or "leaderboard" in text:
             await self.leaderboard(update, context)
@@ -98,23 +140,6 @@ class FamilyTaskBot:
             await self.stats(update, context)
         else:
             await update.message.reply_text("Messaggio ricevuto. Usa il menu o i comandi.")
-
-    async def assign_task_menu(self, update, context):
-        """Mostra le categorie di task per l'assegnazione"""
-        keyboard = [
-            [InlineKeyboardButton(cat["label"], callback_data=f"assign_category_{catid}")]
-            for catid, cat in self.TASK_CATEGORIES.items()
-        ]
-        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                "*Scegli una categoria di task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
-            )
-        else:
-            await update.message.reply_text(
-                "*Scegli una categoria di task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
-            )
 
     async def assign_category_menu(self, query, catid):
         """Mostra le task della categoria scelta, indicando se già assegnate"""
