@@ -107,7 +107,7 @@ class FamilyTaskDB:
     def get_user_stats(self, user_id):
         cur = self.conn.cursor()
         cur.execute("""
-            SELECT COALESCE(SUM(t.points),0), COUNT(*), COALESCE(MAX(a.completed_date), NOW())
+            SELECT COALESCE(SUM(t.points),0), COUNT(*)
             FROM assigned_tasks a
             JOIN tasks t ON a.task_id = t.id
             WHERE a.assigned_to = %s AND a.status = 'completed';
