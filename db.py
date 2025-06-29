@@ -128,8 +128,21 @@ class FamilyTaskDB:
     def complete_task(self, chat_id, task_id, user_id):
         try:
             cur = self.conn.cursor()
+            # Aggiorna lo stato a 'completed'
             cur.execute("""
                 UPDATE assigned_tasks SET status = 'completed' WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
+            """, (chat_id, task_id, user_id))
+            # Sposta la riga in completed_tasks per storico
+            cur.execute("""
+                INSERT INTO completed_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, completed_date, points_earned)
+                SELECT chat_id, task_id, assigned_to, assigned_by, assigned_date, NOW(),
+                       (SELECT points FROM tasks WHERE id = assigned_tasks.task_id)
+                FROM assigned_tasks
+                WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
+            """, (chat_id, task_id, user_id))
+            # Elimina la riga da assigned_tasks (così può essere riassegnata)
+            cur.execute("""
+                DELETE FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
             """, (chat_id, task_id, user_id))
             self.conn.commit()
             cur.close()
