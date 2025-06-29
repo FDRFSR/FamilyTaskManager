@@ -170,10 +170,9 @@ class FamilyTaskDB:
         try:
             cur = self.conn.cursor()
             cur.execute("""
-                SELECT COALESCE(SUM(t.points),0), COUNT(*)
-                FROM assigned_tasks a
-                JOIN tasks t ON a.task_id = t.id
-                WHERE a.assigned_to = %s AND a.status = 'completed';
+                SELECT COALESCE(SUM(points_earned),0), COUNT(*)
+                FROM completed_tasks
+                WHERE assigned_to = %s;
             """, (user_id,))
             row = cur.fetchone()
             cur.close()
