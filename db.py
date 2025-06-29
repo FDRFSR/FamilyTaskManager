@@ -125,3 +125,16 @@ class FamilyTaskDB:
             })
         leaderboard.sort(key=lambda x: (-x['total_points'], -x['tasks_completed']))
         return leaderboard
+
+    def get_task_by_id(self, task_id):
+        for t in self._tasks:
+            if t['id'] == task_id:
+                return t
+        # Se non trovata in cache, cerca nel DB
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, name, points, time_minutes FROM tasks WHERE id = %s;", (task_id,))
+        row = cur.fetchone()
+        cur.close()
+        if row:
+            return {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
+        return None
