@@ -90,3 +90,22 @@ class FamilyTaskDB:
             'level': level,
             'streak': streak
         }
+
+    def get_leaderboard(self, chat_id):
+        # Leaderboard in memoria: classifica membri per punti (task assegnate)
+        members = self.get_family_members(chat_id)
+        if not members:
+            return []
+        leaderboard = []
+        for m in members:
+            stats = self.get_user_stats(m['user_id'])
+            if stats:
+                leaderboard.append({
+                    'user_id': m['user_id'],
+                    'first_name': m['first_name'],
+                    'total_points': stats['total_points'],
+                    'tasks_completed': stats['tasks_completed'],
+                    'level': stats['level']
+                })
+        leaderboard.sort(key=lambda x: (-x['total_points'], -x['tasks_completed']))
+        return leaderboard
