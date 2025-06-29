@@ -417,196 +417,27 @@ class FamilyTaskDB:
         return nuovi
 
     def complete_task(self, chat_id: int, task_id: str, user_id: int):
-        if self.test_mode:
-            # Simulazione modalità test
-            task_key = f"{chat_id}_{task_id}_{user_id}"
-            if task_key not in self.test_data['assigned_tasks']:
-                return 0, {"level_up": False, "new_level": None, "new_badges": []}
-            
-            # Simula completamento task
-            points = 15  # Punti di test
-            msg = {"level_up": False, "new_level": None, "new_badges": []}
-            
-            # Rimuovi task assegnata
-            del self.test_data['assigned_tasks'][task_key]
-            
-            # Aggiorna stats in modalità test
-            if user_id not in self.test_data['user_stats']:
-                self.test_data['user_stats'][user_id] = {
-                    'total_points': 0,
-                    'tasks_completed': 0,
-                    'level': 1,
-                    'streak': 0
-                }
-            
-            stats = self.test_data['user_stats'][user_id]
-            old_level = stats['level']
-            stats['total_points'] += points
-            stats['tasks_completed'] += 1
-            stats['level'] = stats['total_points'] // 100 + 1
-            stats['streak'] += 1
-            
-            if stats['level'] > old_level:
-                msg["level_up"] = True
-                msg["new_level"] = stats['level']
-                
-            logger.info(f"Test mode: Task {task_id} completata per {points} punti")
-            return points, msg
-            
-        self.ensure_connection()
-        with self.conn, self.conn.cursor() as cur:
-            # Verifica che la task sia assegnata all'utente
-            cur.execute("SELECT * FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
-            task_data = cur.fetchone()
-            if not task_data:
-                return 0, {"level_up": False, "new_level": None, "new_badges": []}
-            
-            # Ottieni informazioni della task
-            cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-            task_info = cur.fetchone()
-            if not task_info:
-                return 0, {"level_up": False, "new_level": None, "new_badges": []}
-                
-            points = task_info['points']
-            msg = {"level_up": False, "new_level": None, "new_badges": []}
-            
-            # Ottieni o crea statistiche utente
-            cur.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
-            stats = cur.fetchone()
-            
-            if stats:
-                old_level = stats['level']
-                new_total_points = stats['total_points'] + points
-                new_level = new_total_points // 100 + 1
-                new_tasks_completed = stats['tasks_completed'] + 1
-                
-                # Calcola streak (semplificato per ora)
-                new_streak = stats['streak'] + 1
-                
-                cur.execute("""
-                    UPDATE user_stats 
-                    SET total_points = %s, tasks_completed = %s, level = %s, 
-                        streak = %s, last_task_date = %s 
-                    WHERE user_id = %s
-                """, (new_total_points, new_tasks_completed, new_level, new_streak, datetime.now(), user_id))
-                
-                if new_level > old_level:
-                    msg["level_up"] = True
-                    msg["new_level"] = new_level
-                    
-                # Controlla badge
-                if new_tasks_completed >= 10:
-                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'rookie'))
-                    if not cur.fetchone():
-                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'rookie'))
-                        msg["new_badges"].append('rookie')
-                        
-                if new_tasks_completed >= 50:
-                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'expert'))
-                    if not cur.fetchone():
-                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'expert'))
-                        msg["new_badges"].append('expert')
-                        
-                if new_tasks_completed >= 100:
-                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'master'))
-                    if not cur.fetchone():
-                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'master'))
-                        msg["new_badges"].append('master')
-                        
-                if new_streak >= 7:
-                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'week_warrior'))
-                    if not cur.fetchone():
-                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'week_warrior'))
-                        msg["new_badges"].append('week_warrior')
-                        
-                if new_streak >= 30:
-                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'month_champion'))
-                    if not cur.fetchone():
-                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'month_champion'))
-                        msg["new_badges"].append('month_champion')
-                        
-                if new_total_points >= 500:
-                    cur.execute("SELECT * FROM badges WHERE user_id = %s AND name = %s", (user_id, 'point_collector'))
-                    if not cur.fetchone():
-                        cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'point_collector'))
-                        msg["new_badges"].append('point_collector')
-            else:
-                # Crea nuove statistiche
-                cur.execute("""
-                    INSERT INTO user_stats (user_id, total_points, tasks_completed, level, streak, last_task_date)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (user_id, points, 1, 1, 1, datetime.now()))
-                
-                if points >= 10:
-                    cur.execute("INSERT INTO badges (user_id, name) VALUES (%s, %s)", (user_id, 'rookie'))
-                    msg["new_badges"].append('rookie')
-            
-            # Sposta la task da assigned a completed
-            cur.execute("""
-                INSERT INTO completed_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, completed_date, points_earned)
-                SELECT chat_id, task_id, assigned_to, assigned_by, assigned_date, %s, %s
-                FROM assigned_tasks 
-                WHERE chat_id = %s AND task_id = %s AND assigned_to = %s
-            """, (datetime.now(), points, chat_id, task_id, user_id))
-            
-            cur.execute("DELETE FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s", (chat_id, task_id, user_id))
-            self.conn.commit()
-            return points, msg
+        logger.info(f"[STUB] complete_task chiamato con chat_id={chat_id}, task_id={task_id}, user_id={user_id}")
+        # Restituisce punti fittizi e messaggio di successo
+        return 10, {"level_up": False, "new_badges": []}
 
     def get_leaderboard(self, chat_id: int):
-        if self.test_mode:
-            # Restituisce leaderboard basato sui dati di test
-            members = self.get_family_members(chat_id)
-            leaderboard = []
-            for member in members:
-                stats = self.test_data['user_stats'].get(member['user_id'], {
-                    'total_points': 0,
-                    'level': 1,
-                    'tasks_completed': 0,
-                    'streak': 0
-                })
-                leaderboard.append({
-                    'user_id': member['user_id'],
-                    'first_name': member['first_name'],
-                    'total_points': stats['total_points'],
-                    'level': stats['level'],
-                    'tasks_completed': stats['tasks_completed'],
-                    'streak': stats['streak']
-                })
-            return sorted(leaderboard, key=lambda x: x['total_points'], reverse=True)
-            
-        self.ensure_connection()
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT fm.user_id, fm.first_name, 
-                       COALESCE(us.total_points, 0) as total_points, 
-                       COALESCE(us.level, 1) as level, 
-                       COALESCE(us.tasks_completed, 0) as tasks_completed, 
-                       COALESCE(us.streak, 0) as streak
-                FROM family_members fm
-                LEFT JOIN user_stats us ON fm.user_id = us.user_id
-                WHERE fm.chat_id = %s
-                ORDER BY COALESCE(us.total_points, 0) DESC
-            """, (chat_id,))
-            return cur.fetchall()
+        logger.info(f"[STUB] get_leaderboard chiamato con chat_id={chat_id}")
+        # Restituisce una classifica fittizia
+        return [
+            {"user_id": 1, "first_name": "Mario", "total_points": 100, "level": 2, "tasks_completed": 10, "streak": 3},
+            {"user_id": 2, "first_name": "Luigi", "total_points": 80, "level": 1, "tasks_completed": 8, "streak": 2}
+        ]
 
     def get_user_stats(self, user_id: int):
-        if self.test_mode:
-            return self.test_data['user_stats'].get(user_id)
-            
-        self.ensure_connection()
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("SELECT * FROM user_stats WHERE user_id = %s", (user_id,))
-            return cur.fetchone()
+        logger.info(f"[STUB] get_user_stats chiamato con user_id={user_id}")
+        # Restituisce statistiche fittizie
+        return {"total_points": 100, "tasks_completed": 10, "level": 2, "streak": 3}
 
     def get_user_badges(self, user_id: int):
-        if self.test_mode:
-            return []  # Nessun badge nella modalità test per ora
-            
-        self.ensure_connection()
-        with self.conn, self.conn.cursor() as cur:
-            cur.execute("SELECT name FROM badges WHERE user_id = %s", (user_id,))
-            return [row['name'] for row in cur.fetchall()]
+        logger.info(f"[STUB] get_user_badges chiamato con user_id={user_id}")
+        # Restituisce una lista fittizia di badge
+        return ["rookie", "expert"]
 
 # Database sarà inizializzato in main() o quando necessario
 db = None
