@@ -79,8 +79,9 @@ class FamilyTaskBot:
 
     async def assign_task_menu(self, update, context):
         chat_id = update.effective_chat.id
+        user = update.effective_user
+        db.add_family_member(chat_id, user.id, user.username, user.first_name)
         tasks = db.get_all_tasks()
-        # Raggruppa per nome (categoria semplificata)
         keyboard = []
         for task in tasks:
             keyboard.append([
@@ -88,7 +89,10 @@ class FamilyTaskBot:
             ])
         keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="main_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("*Scegli una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        if update.message:
+            await update.message.reply_text("*Scegli una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        else:
+            await update.callback_query.edit_message_text("*Scegli una task da assegnare:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def button_handler(self, update, context):
         query = update.callback_query
@@ -100,6 +104,9 @@ class FamilyTaskBot:
         elif data.startswith("assign_"):
             task_id = data.replace("assign_", "")
             members = db.get_family_members(chat_id)
+            if not members:
+                await query.edit_message_text("Nessun membro famiglia trovato. Usa /start da ogni account!")
+                return
             keyboard = []
             for m in members:
                 keyboard.append([
@@ -119,9 +126,9 @@ class FamilyTaskBot:
             except ValueError:
                 await query.edit_message_text("❌ Task già assegnata a questo utente!")
         elif data == "assign_menu":
-            # Torna al menu di scelta task
             class DummyUpdate:
                 message = query.message
+                callback_query = None
             await self.assign_task_menu(DummyUpdate(), context)
         elif data == "show_my_tasks":
             await self.my_tasks(update, context)
@@ -141,33 +148,33 @@ class FamilyTaskBot:
         else:
             await update.message.reply_text("Messaggio ricevuto. Usa il menu o i comandi.")
 
-    async def assign_category_menu(self, query, catid):
-        """Mostra le task della categoria scelta, indicando se già assegnate"""
-        tasks = db.get_default_tasks()
-        chat_id = query.message.chat.id
-        assigned = db.get_assigned_tasks_for_chat(chat_id)
-        members = {m['user_id']: m['first_name'] for m in db.get_family_members(chat_id)}
-        assigned_map = {}
-        for v in assigned:
-            assigned_map.setdefault(v['task_id'], []).append(members.get(v['assigned_to'], str(v['assigned_to'])))
-        cat = self.TASK_CATEGORIES[catid]
-        keyboard = []
-        for task_id in cat['tasks']:
-            task = tasks.get(task_id)
-            if not task:
-                continue
-            if task_id in assigned_map and len(assigned_map[task_id]) >= len(members):
-                # Task già assegnata a tutti
-                button_text = f"{task['name']} (assegnata a tutti)"
-                keyboard.append([InlineKeyboardButton(button_text, callback_data="none")])
-            else:
-                button_text = task['name']
-                keyboard.append([InlineKeyboardButton(button_text, callback_data=f"choose_task_{task_id}")])
-        keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            f"*{cat['label']} - Task disponibili:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
-        )
+    # async def assign_category_menu(self, query, catid):
+    #     """Mostra le task della categoria scelta, indicando se già assegnate"""
+    #     tasks = db.get_default_tasks()
+    #     chat_id = query.message.chat.id
+    #     assigned = db.get_assigned_tasks_for_chat(chat_id)
+    #     members = {m['user_id']: m['first_name'] for m in db.get_family_members(chat_id)}
+    #     assigned_map = {}
+    #     for v in assigned:
+    #         assigned_map.setdefault(v['task_id'], []).append(members.get(v['assigned_to'], str(v['assigned_to'])))
+    #     # cat = self.TASK_CATEGORIES[catid]  # TASK_CATEGORIES non definito
+    #     # keyboard = []
+    #     # for task_id in cat['tasks']:
+    #     #     task = tasks.get(task_id)
+    #     #     if not task:
+    #     #         continue
+    #     #     if task_id in assigned_map and len(assigned_map[task_id]) >= len(members):
+    #     #         # Task già assegnata a tutti
+    #     #         button_text = f"{task['name']} (assegnata a tutti)"
+    #     #         keyboard.append([InlineKeyboardButton(button_text, callback_data="none")])
+    #     #     else:
+    #     #         button_text = task['name']
+    #     #         keyboard.append([InlineKeyboardButton(button_text, callback_data=f"choose_task_{task_id}")])
+    #     # keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
+    #     # reply_markup = InlineKeyboardMarkup(keyboard)
+    #     # await query.edit_message_text(
+    #     #     f"*{cat['label']} - Task disponibili:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup
+    #     # )
 
     async def choose_assign_target(self, query, task_id):
         """Mostra i membri della famiglia per scegliere a chi assegnare la task"""
