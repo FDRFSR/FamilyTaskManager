@@ -59,7 +59,10 @@ class FamilyTaskDB:
 
     def add_family_member(self, chat_id, user_id, username, first_name):
         try:
+            # Assicura che la famiglia esista
             cur = self.conn.cursor()
+            cur.execute("INSERT INTO families (chat_id) VALUES (%s) ON CONFLICT DO NOTHING;", (chat_id,))
+            # Ora aggiungi il membro
             cur.execute("""
                 INSERT INTO family_members (chat_id, user_id, username, first_name, joined_date)
                 VALUES (%s, %s, %s, %s, NOW())
