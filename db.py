@@ -28,9 +28,32 @@ class FamilyTaskDB:
     def _load_tasks_from_db(self):
         cur = self.conn.cursor()
         cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
+        rows = cur.fetchall()
+        if not rows:
+            # Se il DB è vuoto, inserisci task di default
+            default_tasks = [
+                ("cucina_pulizia", "Pulizia cucina", 10, 20),
+                ("bagno_pulizia", "Pulizia bagno", 12, 25),
+                ("spazzatura", "Portare fuori la spazzatura", 5, 5),
+                ("bucato", "Fare il bucato", 8, 15),
+                ("giardino", "Cura del giardino", 15, 30),
+                ("spesa", "Fare la spesa", 7, 20),
+                ("cena", "Preparare la cena", 10, 25),
+                ("camera", "Riordinare la camera", 6, 10),
+                ("animali", "Dare da mangiare agli animali", 4, 5),
+                ("auto", "Lavare l'auto", 13, 30)
+            ]
+            for t in default_tasks:
+                cur.execute(
+                    "INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING;",
+                    t
+                )
+            self.conn.commit()
+            cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
+            rows = cur.fetchall()
         self._tasks = [
             {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
-            for row in cur.fetchall()
+            for row in rows
         ]
         cur.close()
 
