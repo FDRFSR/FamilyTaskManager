@@ -8,32 +8,96 @@ db = FamilyTaskDB()
 logger = logging.getLogger(__name__)
 
 class FamilyTaskBot:
-    # ...existing code from main.py (class FamilyTaskBot)...
-    pass
-
     async def start(self, update, context):
-        await update.message.reply_text("Benvenuto in Family Task Manager! Usa il menu per iniziare.")
+        user = update.effective_user
+        chat_id = update.effective_chat.id
+        db.add_family_member(chat_id, user.id, user.username, user.first_name)
+        text = f"👋 Benvenuto, {user.first_name}!\n\nSono il Family Task Manager. Usa il menu o i comandi per gestire le task della tua famiglia."
+        await update.message.reply_text(text)
 
     async def help_command(self, update, context):
-        await update.message.reply_text("Comandi disponibili:\n/start - Avvia il bot\n/help - Mostra aiuto\n/leaderboard - Classifica\n/stats - Le tue statistiche\n/tasks - Elenco task\n/mytasks - Le tue task")
+        text = (
+            "ℹ️ *Comandi disponibili:*\n"
+            "/start - Avvia il bot\n"
+            "/help - Mostra questo messaggio\n"
+            "/leaderboard - Classifica famiglia\n"
+            "/stats - Le tue statistiche\n"
+            "/tasks - Elenco task disponibili\n"
+            "/mytasks - Le tue task assegnate\n"
+        )
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     async def leaderboard(self, update, context):
-        await update.message.reply_text("Leaderboard non ancora implementata.")
+        chat_id = update.effective_chat.id
+        leaderboard = db.get_leaderboard(chat_id)
+        if not leaderboard:
+            await update.message.reply_text("Nessuna classifica disponibile per questa famiglia.")
+            return
+        text = "🏆 *Classifica Famiglia*\n\n"
+        for i, entry in enumerate(leaderboard, 1):
+            pos = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}°"
+            text += f"{pos} {entry['first_name']}: {entry['total_points']} punti (Lv.{entry['level']}, {entry['tasks_completed']} task)\n"
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     async def stats(self, update, context):
-        await update.message.reply_text("Statistiche non ancora implementate.")
+        user = update.effective_user
+        stats = db.get_user_stats(user.id)
+        if not stats:
+            await update.message.reply_text("Nessuna statistica trovata. Completa una task per iniziare!")
+            return
+        text = (
+            f"📊 *Le tue statistiche*\n\n"
+            f"👤 {user.first_name}\n"
+            f"⭐ Punti totali: {stats['total_points']}\n"
+            f"✅ Task completate: {stats['tasks_completed']}\n"
+            f"🏅 Livello: {stats['level']}\n"
+            f"🔥 Streak: {stats['streak']}\n"
+        )
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     async def show_tasks(self, update, context):
-        await update.message.reply_text("Elenco task non ancora implementato.")
+        tasks = db.get_all_tasks()
+        if not tasks:
+            await update.message.reply_text("Nessuna task disponibile.")
+            return
+        text = "📋 *Task disponibili:*\n\n"
+        for task in tasks:
+            text += f"• {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)\n"
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     async def my_tasks(self, update, context):
-        await update.message.reply_text("Le tue task non ancora implementate.")
+        user = update.effective_user
+        chat_id = update.effective_chat.id
+        tasks = db.get_user_assigned_tasks(chat_id, user.id)
+        if not tasks:
+            await update.message.reply_text("Non hai task assegnate!")
+            return
+        text = "📝 *Le tue task assegnate:*\n\n"
+        for task in tasks:
+            text += f"• {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)\n"
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     async def button_handler(self, update, context):
-        await update.callback_query.answer("Funzione non ancora implementata.")
+        query = update.callback_query
+        data = query.data
+        # Esempio: gestione callback principali
+        if data == "main_menu":
+            await query.edit_message_text("Menu principale. Usa i comandi o il menu.")
+        elif data == "show_my_tasks":
+            await self.my_tasks(update, context)
+        else:
+            await query.answer("Funzione non ancora implementata.")
 
     async def handle_message(self, update, context):
-        await update.message.reply_text("Messaggio ricevuto. Usa il menu o i comandi.")
+        text = update.message.text.lower()
+        if "task" in text:
+            await self.show_tasks(update, context)
+        elif "classifica" in text or "leaderboard" in text:
+            await self.leaderboard(update, context)
+        elif "stat" in text:
+            await self.stats(update, context)
+        else:
+            await update.message.reply_text("Messaggio ricevuto. Usa il menu o i comandi.")
 
     async def assign_task_menu(self, update, context):
         """Mostra le categorie di task per l'assegnazione"""
