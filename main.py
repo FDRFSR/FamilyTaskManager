@@ -1666,3 +1666,38 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 )
             except Exception as e2:
                 logger.critical(f"Errore critico nel fallback di show_complete_menu: {e2}")
+
+if __name__ == "__main__":
+    import os
+    import sys
+    from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+
+    # Caricamento sicuro del token
+    TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+    if not TELEGRAM_TOKEN:
+        logger.critical("TELEGRAM_TOKEN non impostato nelle variabili d'ambiente! Impossibile avviare il bot.")
+        sys.exit(1)
+
+    # Inizializza DB e bot
+    db = get_db()
+    bot = FamilyTaskBot()
+
+    # Crea l'applicazione Telegram
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Registra handler comandi
+    application.add_handler(CommandHandler("start", bot.start))
+    application.add_handler(CommandHandler("help", bot.help_command))
+    application.add_handler(CommandHandler("leaderboard", bot.leaderboard))
+    application.add_handler(CommandHandler("stats", bot.stats))
+    application.add_handler(CommandHandler("tasks", bot.show_tasks))
+    application.add_handler(CommandHandler("mytasks", bot.my_tasks))
+
+    # Handler per callback dei bottoni
+    application.add_handler(CallbackQueryHandler(bot.button_handler))
+
+    # Handler per messaggi di testo (menu a bottoni)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+
+    logger.info("Bot Family Task Manager avviato. In ascolto...")
+    application.run_polling()
