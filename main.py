@@ -195,10 +195,17 @@ class FamilyTaskDB:
                 cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
                 task = cur.fetchone()
                 if not task:
+                    # Logging ancora più dettagliato
                     cur.execute("SELECT id FROM tasks")
                     all_ids = [row['id'] for row in cur.fetchall()]
                     logging.error(f"Task ancora non trovata dopo rigenerazione: {task_id}. Id ora presenti: {all_ids}")
-                    return None
+                    # Fallback: restituisci una task di emergenza
+                    return {
+                        'id': task_id,
+                        'name': f'Task non trovata: {task_id}',
+                        'points': 0,
+                        'time_minutes': 0
+                    }
             return task
 
     def get_assigned_tasks_for_chat(self, chat_id: int):
@@ -1858,29 +1865,3 @@ Questo bot ti aiuta a gestire le faccende domestiche in modo divertente con la t
                 )
             except Exception as e2:
                 logger.critical(f"Errore critico nel fallback di show_complete_menu: {e2}")
-
-if __name__ == "__main__":
-    db = get_db()
-    bot = FamilyTaskBot()
-    telegram_token = os.environ.get("TELEGRAM_TOKEN")
-    if not telegram_token:
-        logger.critical("Variabile d'ambiente TELEGRAM_TOKEN mancante. Impossibile avviare il bot.")
-        print("ERRORE: Devi impostare la variabile d'ambiente TELEGRAM_TOKEN con il token del bot Telegram.")
-        exit(1)
-    application = Application.builder().token(telegram_token).build()
-
-    # Comandi principali
-    application.add_handler(CommandHandler("start", bot.start))
-    application.add_handler(CommandHandler("help", bot.help_command))
-    application.add_handler(CommandHandler("tasks", bot.show_tasks))
-    application.add_handler(CommandHandler("mytasks", bot.my_tasks))
-    application.add_handler(CommandHandler("leaderboard", bot.leaderboard))
-    application.add_handler(CommandHandler("stats", bot.stats))
-
-    # Messaggi testuali (menu reply)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
-    # Callback bottoni inline
-    application.add_handler(CallbackQueryHandler(bot.button_handler))
-
-    logger.info("Family Task Manager Bot avviato!")
-    application.run_polling()
