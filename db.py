@@ -8,94 +8,93 @@ logger = logging.getLogger(__name__)
 
 class FamilyTaskDB:
     def __init__(self):
-        self.test_mode = True
+        self.test_mode = False
+        self._tasks = []
+        self._assigned = []
+        self._members = {}
+        self._completed = []
+        self.conn = None
+        self._connect_db()
+        self._load_tasks_from_db()
+
+    def _connect_db(self):
+        import psycopg2
+        import os
+        db_url = os.environ.get("DATABASE_URL")
+        if not db_url:
+            raise RuntimeError("DATABASE_URL non impostato nelle variabili d'ambiente!")
+        self.conn = psycopg2.connect(db_url, sslmode='require')
+
+    def _load_tasks_from_db(self):
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
         self._tasks = [
-            {"id": "cucina_pulizia", "name": "Pulizia cucina", "points": 10, "time_minutes": 20},
-            {"id": "bagno_pulizia", "name": "Pulizia bagno", "points": 12, "time_minutes": 25},
-            {"id": "spazzatura", "name": "Portare fuori la spazzatura", "points": 5, "time_minutes": 5},
-            {"id": "bucato", "name": "Fare il bucato", "points": 8, "time_minutes": 15},
-            {"id": "giardino", "name": "Cura del giardino", "points": 15, "time_minutes": 30},
-            {"id": "spesa", "name": "Fare la spesa", "points": 7, "time_minutes": 20},
-            {"id": "cena", "name": "Preparare la cena", "points": 10, "time_minutes": 25},
-            {"id": "camera", "name": "Riordinare la camera", "points": 6, "time_minutes": 10},
-            {"id": "animali", "name": "Dare da mangiare agli animali", "points": 4, "time_minutes": 5},
-            {"id": "auto", "name": "Lavare l'auto", "points": 13, "time_minutes": 30},
+            {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
+            for row in cur.fetchall()
         ]
-        self._assigned = []  # [{chat_id, task_id, assigned_to, assigned_by}]
-        self._members = {}   # chat_id: [{user_id, username, first_name}]
+        cur.close()
 
     def add_family_member(self, chat_id, user_id, username, first_name):
-        if chat_id not in self._members:
-            self._members[chat_id] = []
-        if not any(m['user_id'] == user_id for m in self._members[chat_id]):
-            self._members[chat_id].append({"user_id": user_id, "username": username, "first_name": first_name})
+        cur = self.conn.cursor()
+        cur.execute("""
+            INSERT INTO family_members (chat_id, user_id, username, first_name, joined_date)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (chat_id, user_id) DO NOTHING;
+        """, (chat_id, user_id, username, first_name))
+        self.conn.commit()
+        cur.close()
 
     def get_all_tasks(self):
         return self._tasks.copy()
 
     def assign_task(self, chat_id, task_id, assigned_to, assigned_by):
-        # Non permette doppioni
-        for a in self._assigned:
-            if a['chat_id'] == chat_id and a['task_id'] == task_id and a['assigned_to'] == assigned_to:
-                raise ValueError("Task già assegnata a questo utente!")
-        self._assigned.append({
-            "chat_id": chat_id,
-            "task_id": task_id,
-            "assigned_to": assigned_to,
-            "assigned_by": assigned_by
-        })
+        cur = self.conn.cursor()
+        cur.execute("""
+            INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status)
+            VALUES (%s, %s, %s, %s, NOW(), 'assigned')
+            ON CONFLICT (chat_id, task_id, assigned_to) DO NOTHING;
+        """, (chat_id, task_id, assigned_to, assigned_by))
+        self.conn.commit()
+        cur.close()
 
     def get_user_assigned_tasks(self, chat_id, user_id):
-        assigned_ids = [a['task_id'] for a in self._assigned if a['chat_id'] == chat_id and a['assigned_to'] == user_id]
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT t.id, t.name, t.points, t.time_minutes
+            FROM assigned_tasks a
+            JOIN tasks t ON a.task_id = t.id
+            WHERE a.chat_id = %s AND a.assigned_to = %s AND a.status = 'assigned';
+        """, (chat_id, user_id))
+        rows = cur.fetchall()
+        cur.close()
         return [
-            {"task_id": t["id"], "name": t["name"], "points": t["points"], "time_minutes": t["time_minutes"]}
-            for t in self._tasks if t["id"] in assigned_ids
+            {"task_id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
+            for row in rows
         ]
 
-    def get_assigned_tasks_for_chat(self, chat_id):
-        return [a for a in self._assigned if a['chat_id'] == chat_id]
-
-    def get_family_members(self, chat_id):
-        return self._members.get(chat_id, [])
-
-    def get_task_by_id(self, task_id):
-        for t in self._tasks:
-            if t['id'] == task_id:
-                return t
-        return None
-
     def complete_task(self, chat_id, task_id, user_id):
-        # Marca una task come completata e aggiorna le statistiche in memoria
-        # Rimuove l'assegnazione e aggiunge a una lista di completate
-        if not hasattr(self, '_completed'):
-            self._completed = []  # [{chat_id, task_id, user_id}]
-        found = False
-        for a in list(self._assigned):
-            if a['chat_id'] == chat_id and a['task_id'] == task_id and a['assigned_to'] == user_id:
-                self._assigned.remove(a)
-                found = True
-                break
-        if found:
-            self._completed.append({'chat_id': chat_id, 'task_id': task_id, 'user_id': user_id})
-            return True
-        return False
+        cur = self.conn.cursor()
+        cur.execute("""
+            UPDATE assigned_tasks SET status = 'completed' WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
+        """, (chat_id, task_id, user_id))
+        self.conn.commit()
+        cur.close()
+        return True
 
     def get_user_stats(self, user_id):
-        # Statistiche: conta solo le task completate
-        total_points = 0
-        tasks_completed = 0
-        level = 1
-        streak = 0
-        completed = getattr(self, '_completed', [])
-        for c in completed:
-            if c['user_id'] == user_id:
-                tasks_completed += 1
-                t = next((t for t in self._tasks if t['id'] == c['task_id']), None)
-                if t:
-                    total_points += t['points']
-        if tasks_completed > 0:
-            level = 1 + total_points // 50
-            streak = min(tasks_completed, 7)
+        cur = self.conn.cursor()
+        cur.execute("""
+            SELECT COALESCE(SUM(t.points),0), COUNT(*), COALESCE(MAX(a.completed_date), NOW())
+            FROM assigned_tasks a
+            JOIN tasks t ON a.task_id = t.id
+            WHERE a.assigned_to = %s AND a.status = 'completed';
+        """, (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        total_points = row[0] or 0
+        tasks_completed = row[1] or 0
+        level = 1 + total_points // 50
+        streak = min(tasks_completed, 7)
         return {
             'total_points': total_points,
             'tasks_completed': tasks_completed,
@@ -103,10 +102,17 @@ class FamilyTaskDB:
             'streak': streak
         }
 
+    def get_family_members(self, chat_id):
+        cur = self.conn.cursor()
+        cur.execute("SELECT user_id, username, first_name FROM family_members WHERE chat_id = %s;", (chat_id,))
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {"user_id": row[0], "username": row[1], "first_name": row[2]} for row in rows
+        ]
+
     def get_leaderboard(self, chat_id):
         members = self.get_family_members(chat_id)
-        if not members:
-            return []
         leaderboard = []
         for m in members:
             stats = self.get_user_stats(m['user_id'])
