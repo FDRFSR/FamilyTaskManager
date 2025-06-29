@@ -77,15 +77,48 @@ class FamilyTaskBot:
         if not tasks:
             await update.message.reply_text("Nessuna task disponibile.")
             return
-        text = "📋 *Task disponibili:*\n\n"
-        keyboard = []
+        # Raggruppa per argomento
+        categories = {
+            "Pulizie": [],
+            "Cucina": [],
+            "Spesa": [],
+            "Bucato": [],
+            "Giardino": [],
+            "Animali": [],
+            "Auto": [],
+            "Altro": []
+        }
         for task in tasks:
-            emoji = "🧹" if "pulizia" in task['name'].lower() else "🛒" if "spesa" in task['name'].lower() else "🍽️" if "cena" in task['name'].lower() else "🧺" if "bucato" in task['name'].lower() else "🚗" if "auto" in task['name'].lower() else "🌳" if "giardino" in task['name'].lower() else "🐾" if "animali" in task['name'].lower() else "🛏️" if "camera" in task['name'].lower() else "🗑️" if "spazzatura" in task['name'].lower() else "✅"
-            keyboard.append([
-                InlineKeyboardButton(f"{emoji} {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)", callback_data=f"assign_{task['id']}")
-            ])
+            name = task['name'].lower()
+            if "pulizia" in name:
+                categories["Pulizie"].append(task)
+            elif "cucina" in name or "cena" in name:
+                categories["Cucina"].append(task)
+            elif "spesa" in name:
+                categories["Spesa"].append(task)
+            elif "bucato" in name:
+                categories["Bucato"].append(task)
+            elif "giardino" in name:
+                categories["Giardino"].append(task)
+            elif "animali" in name:
+                categories["Animali"].append(task)
+            elif "auto" in name:
+                categories["Auto"].append(task)
+            else:
+                categories["Altro"].append(task)
+        # Costruisci tastiera raggruppata
+        keyboard = []
+        for cat, cat_tasks in categories.items():
+            if not cat_tasks:
+                continue
+            keyboard.append([InlineKeyboardButton(f"— {cat} —", callback_data="none")])
+            for task in cat_tasks:
+                emoji = "🧹" if "pulizia" in task['name'].lower() else "🛒" if "spesa" in task['name'].lower() else "🍽️" if "cena" in task['name'].lower() or "cucina" in task['name'].lower() else "🧺" if "bucato" in task['name'].lower() else "🚗" if "auto" in task['name'].lower() else "🌳" if "giardino" in task['name'].lower() else "🐾" if "animali" in task['name'].lower() else "🛏️" if "camera" in task['name'].lower() else "🗑️" if "spazzatura" in task['name'].lower() else "✅"
+                keyboard.append([
+                    InlineKeyboardButton(f"{emoji} {task['name']}", callback_data=f"assign_{task['id']}")
+                ])
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await update.message.reply_text("📋 *Task disponibili per argomento:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def my_tasks(self, update, context):
         user = update.effective_user
@@ -178,13 +211,23 @@ class FamilyTaskBot:
     async def handle_message(self, update, context):
         user = update.effective_user
         chat_id = update.effective_chat.id
-        # Auto-aggiunta utente come membro famiglia su ogni messaggio
         try:
             db.add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
             logger.error(f"Errore auto-add membro su messaggio: {e}")
         text = update.message.text.lower()
-        if "assegna" in text:
+        # Supporta anche i bottoni con emoji
+        if text in ["/tasks", "tasks", "📋 tasks"]:
+            await self.show_tasks(update, context)
+        elif text in ["/mytasks", "mytasks", "📝 mytasks"]:
+            await self.my_tasks(update, context)
+        elif text in ["/leaderboard", "leaderboard", "🏆 leaderboard"]:
+            await self.leaderboard(update, context)
+        elif text in ["/stats", "stats", "📊 stat", "stat"]:
+            await self.stats(update, context)
+        elif text in ["/help", "help", "ℹ️ help"]:
+            await self.help_command(update, context)
+        elif "assegna" in text:
             await self.assign_task_menu(update, context)
         elif "task" in text:
             await self.show_tasks(update, context)
