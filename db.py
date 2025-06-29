@@ -84,13 +84,22 @@ class FamilyTaskDB:
     def assign_task(self, chat_id, task_id, assigned_to, assigned_by):
         try:
             cur = self.conn.cursor()
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status)
                 VALUES (%s, %s, %s, %s, NOW(), 'assigned')
                 ON CONFLICT (chat_id, task_id, assigned_to) DO NOTHING;
-            """, (chat_id, task_id, assigned_to, assigned_by))
+                """,
+                (chat_id, task_id, assigned_to, assigned_by)
+            )
+            inserted = cur.rowcount
             self.conn.commit()
             cur.close()
+            if inserted == 0:
+                # Task già assegnata a questo utente
+                raise ValueError("Task già assegnata a questo utente!")
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"Errore in assign_task: {e}")
             self.conn.rollback()
