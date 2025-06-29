@@ -11,7 +11,11 @@ class FamilyTaskBot:
     async def start(self, update, context):
         user = update.effective_user
         chat_id = update.effective_chat.id
-        db.add_family_member(chat_id, user.id, user.username, user.first_name)
+        # Fix: supporta sia messaggi che /start da bottoni (callback)
+        try:
+            db.add_family_member(chat_id, user.id, user.username, user.first_name)
+        except Exception as e:
+            logger.error(f"Errore add_family_member: {e}")
         text = (
             f"👋 Benvenuto, {user.first_name}!\n\n"
             "Sono il Family Task Manager. Usa il menu o i comandi per gestire le task della tua famiglia."
@@ -22,7 +26,11 @@ class FamilyTaskBot:
             ["/help"]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(text, reply_markup=reply_markup)
+        # Gestione robusta: supporta sia messaggi che callback
+        if update.message:
+            await update.message.reply_text(text, reply_markup=reply_markup)
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
 
     async def help_command(self, update, context):
         text = (
