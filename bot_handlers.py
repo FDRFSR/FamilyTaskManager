@@ -21,9 +21,9 @@ class FamilyTaskBot:
             "Sono il Family Task Manager. Usa il menu o i comandi per gestire le task della tua famiglia."
         )
         keyboard = [
-            ["/tasks", "/mytasks"],
-            ["/leaderboard", "/stats"],
-            ["/help"]
+            ["📋 Tasks", "📝 MyTasks"],
+            ["🏆 Leaderboard", "📊 Stat"],
+            ["ℹ️ Help"]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         # Gestione robusta: supporta sia messaggi che callback
@@ -80,9 +80,9 @@ class FamilyTaskBot:
         text = "📋 *Task disponibili:*\n\n"
         keyboard = []
         for task in tasks:
-            text += f"• {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)\n"
+            emoji = "🧹" if "pulizia" in task['name'].lower() else "🛒" if "spesa" in task['name'].lower() else "🍽️" if "cena" in task['name'].lower() else "🧺" if "bucato" in task['name'].lower() else "🚗" if "auto" in task['name'].lower() else "🌳" if "giardino" in task['name'].lower() else "🐾" if "animali" in task['name'].lower() else "🛏️" if "camera" in task['name'].lower() else "🗑️" if "spazzatura" in task['name'].lower() else "✅"
             keyboard.append([
-                InlineKeyboardButton(f"Assegna '{task['name']}'", callback_data=f"assign_{task['id']}")
+                InlineKeyboardButton(f"{emoji} {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)", callback_data=f"assign_{task['id']}")
             ])
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
