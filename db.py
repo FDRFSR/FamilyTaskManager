@@ -64,28 +64,38 @@ class FamilyTaskDB:
                 return t
         return None
 
+    def complete_task(self, chat_id, task_id, user_id):
+        # Marca una task come completata e aggiorna le statistiche in memoria
+        # Rimuove l'assegnazione e aggiunge a una lista di completate
+        if not hasattr(self, '_completed'):
+            self._completed = []  # [{chat_id, task_id, user_id}]
+        found = False
+        for a in list(self._assigned):
+            if a['chat_id'] == chat_id and a['task_id'] == task_id and a['assigned_to'] == user_id:
+                self._assigned.remove(a)
+                found = True
+                break
+        if found:
+            self._completed.append({'chat_id': chat_id, 'task_id': task_id, 'user_id': user_id})
+            return True
+        return False
+
     def get_user_stats(self, user_id):
-        # Statistiche fittizie in memoria (solo test mode)
+        # Statistiche: conta solo le task completate
         total_points = 0
         tasks_completed = 0
         level = 1
         streak = 0
-        for a in self._assigned:
-            if a['assigned_to'] == user_id:
+        completed = getattr(self, '_completed', [])
+        for c in completed:
+            if c['user_id'] == user_id:
                 tasks_completed += 1
-                t = next((t for t in self._tasks if t['id'] == a['task_id']), None)
+                t = next((t for t in self._tasks if t['id'] == c['task_id']), None)
                 if t:
                     total_points += t['points']
         if tasks_completed > 0:
             level = 1 + total_points // 50
             streak = min(tasks_completed, 7)
-        if tasks_completed == 0:
-            return {
-                'total_points': 0,
-                'tasks_completed': 0,
-                'level': 1,
-                'streak': 0
-            }
         return {
             'total_points': total_points,
             'tasks_completed': tasks_completed,

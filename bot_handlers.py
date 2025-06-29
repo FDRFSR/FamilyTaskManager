@@ -156,10 +156,12 @@ class FamilyTaskBot:
             user_id = query.from_user.id
             chat_id = query.message.chat.id
             try:
-                # Simula completamento task (aggiungi logica reale se serve)
-                # Rimuovi l'assegnazione completata
-                db._assigned = [a for a in db._assigned if not (a['chat_id'] == chat_id and a['task_id'] == task_id and a['assigned_to'] == user_id)]
-                await query.edit_message_text("🎉 Task completata! Ottimo lavoro.")
+                # Usa la logica reale di completamento
+                ok = db.complete_task(chat_id, task_id, user_id)
+                if ok:
+                    await query.edit_message_text("🎉 Task completata! Ottimo lavoro.")
+                else:
+                    await query.edit_message_text("❌ Task non trovata o già completata.")
             except Exception as exc:
                 await query.edit_message_text(f"❌ Errore nel completamento: {exc}")
         else:
