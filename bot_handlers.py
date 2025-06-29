@@ -176,6 +176,13 @@ class FamilyTaskBot:
             await query.answer("Funzione non ancora implementata.")
 
     async def handle_message(self, update, context):
+        user = update.effective_user
+        chat_id = update.effective_chat.id
+        # Auto-aggiunta utente come membro famiglia su ogni messaggio
+        try:
+            db.add_family_member(chat_id, user.id, user.username, user.first_name)
+        except Exception as e:
+            logger.error(f"Errore auto-add membro su messaggio: {e}")
         text = update.message.text.lower()
         if "assegna" in text:
             await self.assign_task_menu(update, context)
