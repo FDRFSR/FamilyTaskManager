@@ -73,52 +73,23 @@ class FamilyTaskBot:
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
     async def show_tasks(self, update, context):
-        tasks = db.get_all_tasks()
-        if not tasks:
-            await update.message.reply_text("Nessuna task disponibile.")
-            return
-        # Raggruppa per argomento
-        categories = {
-            "Pulizie": [],
-            "Cucina": [],
-            "Spesa": [],
-            "Bucato": [],
-            "Giardino": [],
-            "Animali": [],
-            "Auto": [],
-            "Altro": []
-        }
-        for task in tasks:
-            name = task['name'].lower()
-            if "pulizia" in name:
-                categories["Pulizie"].append(task)
-            elif "cucina" in name or "cena" in name:
-                categories["Cucina"].append(task)
-            elif "spesa" in name:
-                categories["Spesa"].append(task)
-            elif "bucato" in name:
-                categories["Bucato"].append(task)
-            elif "giardino" in name:
-                categories["Giardino"].append(task)
-            elif "animali" in name:
-                categories["Animali"].append(task)
-            elif "auto" in name:
-                categories["Auto"].append(task)
-            else:
-                categories["Altro"].append(task)
-        # Costruisci tastiera raggruppata
-        keyboard = []
-        for cat, cat_tasks in categories.items():
-            if not cat_tasks:
-                continue
-            keyboard.append([InlineKeyboardButton(f"— {cat} —", callback_data="none")])
-            for task in cat_tasks:
-                emoji = "🧹" if "pulizia" in task['name'].lower() else "🛒" if "spesa" in task['name'].lower() else "🍽️" if "cena" in task['name'].lower() or "cucina" in task['name'].lower() else "🧺" if "bucato" in task['name'].lower() else "🚗" if "auto" in task['name'].lower() else "🌳" if "giardino" in task['name'].lower() else "🐾" if "animali" in task['name'].lower() else "🛏️" if "camera" in task['name'].lower() else "🗑️" if "spazzatura" in task['name'].lower() else "✅"
-                keyboard.append([
-                    InlineKeyboardButton(f"{emoji} {task['name']}", callback_data=f"assign_{task['id']}")
-                ])
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        await update.message.reply_text("📋 *Task disponibili per argomento:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        # Mostra solo le categorie come pulsanti
+        categories = [
+            ("Pulizie", "🧹"),
+            ("Cucina", "🍽️"),
+            ("Spesa", "🛒"),
+            ("Bucato", "🧺"),
+            ("Giardino", "🌳"),
+            ("Animali", "🐾"),
+            ("Auto", "🚗"),
+            ("Altro", "📦")
+        ]
+        keyboard = [
+            [InlineKeyboardButton(f"{emoji} {cat}", callback_data=f"cat_{cat.lower()}")]
+            for cat, emoji in categories
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("📋 *Scegli una categoria di task:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def my_tasks(self, update, context):
         user = update.effective_user
@@ -205,6 +176,49 @@ class FamilyTaskBot:
                     await query.edit_message_text("❌ Task non trovata o già completata.")
             except Exception as exc:
                 await query.edit_message_text(f"❌ Errore nel completamento: {exc}")
+        elif data.startswith("cat_"):
+            cat = data.replace("cat_", "")
+            tasks = db.get_all_tasks()
+            # Raggruppa le task per categoria
+            cat_map = {
+                "pulizie": lambda n: "pulizia" in n,
+                "cucina": lambda n: "cucina" in n or "cena" in n,
+                "spesa": lambda n: "spesa" in n,
+                "bucato": lambda n: "bucato" in n,
+                "giardino": lambda n: "giardino" in n,
+                "animali": lambda n: "animali" in n,
+                "auto": lambda n: "auto" in n,
+                "altro": lambda n: True
+            }
+            filtered = [t for t in tasks if cat_map.get(cat, lambda n: False)(t['name'].lower())]
+            if not filtered:
+                await query.edit_message_text(f"Nessuna task trovata per {cat.title()}.")
+                return
+            keyboard = [
+                [InlineKeyboardButton(f"{t['name']}", callback_data=f"assign_{t['id']}")]
+                for t in filtered
+            ]
+            keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="tasks_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(f"*{cat.title()}* - Scegli una task:", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        elif data == "tasks_menu":
+            # Torna al menu categorie
+            categories = [
+                ("Pulizie", "🧹"),
+                ("Cucina", "🍽️"),
+                ("Spesa", "🛒"),
+                ("Bucato", "🧺"),
+                ("Giardino", "🌳"),
+                ("Animali", "🐾"),
+                ("Auto", "🚗"),
+                ("Altro", "📦")
+            ]
+            keyboard = [
+                [InlineKeyboardButton(f"{emoji} {cat}", callback_data=f"cat_{cat.lower()}")]
+                for cat, emoji in categories
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("📋 *Scegli una categoria di task:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         else:
             await query.answer("Funzione non ancora implementata.")
 
