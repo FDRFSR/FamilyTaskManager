@@ -11,6 +11,30 @@ class FamilyTaskBot:
     # ...existing code from main.py (class FamilyTaskBot)...
     pass
 
+    async def start(self, update, context):
+        await update.message.reply_text("Benvenuto in Family Task Manager! Usa il menu per iniziare.")
+
+    async def help_command(self, update, context):
+        await update.message.reply_text("Comandi disponibili:\n/start - Avvia il bot\n/help - Mostra aiuto\n/leaderboard - Classifica\n/stats - Le tue statistiche\n/tasks - Elenco task\n/mytasks - Le tue task")
+
+    async def leaderboard(self, update, context):
+        await update.message.reply_text("Leaderboard non ancora implementata.")
+
+    async def stats(self, update, context):
+        await update.message.reply_text("Statistiche non ancora implementate.")
+
+    async def show_tasks(self, update, context):
+        await update.message.reply_text("Elenco task non ancora implementato.")
+
+    async def my_tasks(self, update, context):
+        await update.message.reply_text("Le tue task non ancora implementate.")
+
+    async def button_handler(self, update, context):
+        await update.callback_query.answer("Funzione non ancora implementata.")
+
+    async def handle_message(self, update, context):
+        await update.message.reply_text("Messaggio ricevuto. Usa il menu o i comandi.")
+
     async def assign_task_menu(self, update, context):
         """Mostra le categorie di task per l'assegnazione"""
         keyboard = [
