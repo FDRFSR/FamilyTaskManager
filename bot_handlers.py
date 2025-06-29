@@ -12,8 +12,17 @@ class FamilyTaskBot:
         user = update.effective_user
         chat_id = update.effective_chat.id
         db.add_family_member(chat_id, user.id, user.username, user.first_name)
-        text = f"👋 Benvenuto, {user.first_name}!\n\nSono il Family Task Manager. Usa il menu o i comandi per gestire le task della tua famiglia."
-        await update.message.reply_text(text)
+        text = (
+            f"👋 Benvenuto, {user.first_name}!\n\n"
+            "Sono il Family Task Manager. Usa il menu o i comandi per gestire le task della tua famiglia."
+        )
+        keyboard = [
+            ["/tasks", "/mytasks"],
+            ["/leaderboard", "/stats"],
+            ["/help"]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
     async def help_command(self, update, context):
         text = (
