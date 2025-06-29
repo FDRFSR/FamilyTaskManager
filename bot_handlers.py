@@ -61,9 +61,14 @@ class FamilyTaskBot:
             await update.message.reply_text("Nessuna task disponibile.")
             return
         text = "📋 *Task disponibili:*\n\n"
+        keyboard = []
         for task in tasks:
             text += f"• {task['name']} ({task['points']} pt, ~{task['time_minutes']} min)\n"
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+            keyboard.append([
+                InlineKeyboardButton(f"Assegna '{task['name']}'", callback_data=f"assign_{task['id']}")
+            ])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def my_tasks(self, update, context):
         user = update.effective_user
