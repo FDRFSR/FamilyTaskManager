@@ -41,7 +41,18 @@ class FamilyTaskDB:
                 ("cena", "Preparare la cena", 10, 25),
                 ("camera", "Riordinare la camera", 6, 10),
                 ("animali", "Dare da mangiare agli animali", 4, 5),
-                ("auto", "Lavare l'auto", 13, 30)
+                ("auto", "Lavare l'auto", 13, 30),
+                ("lavastoviglie", "Caricare lavastoviglie", 6, 8),
+                ("stendere_bucato", "Stendere il bucato", 6, 10),
+                ("aspirapolvere", "Passare l’aspirapolvere", 8, 15),
+                ("svuotare_lavastoviglie", "Svuotare la lavastoviglie", 5, 5),
+                ("riordinare_soggiorno", "Riordinare il soggiorno", 6, 10),
+                ("buttare_rifiuti", "Buttare la carta/vetro/plastica", 5, 5),
+                ("fare_letti", "Fare i letti", 4, 5),
+                ("preparare_tavola", "Preparare la tavola", 4, 5),
+                ("sparecchiare_tavola", "Sparecchiare la tavola", 4, 5),
+                ("lettiera_gatto", "Pulire la lettiera del gatto", 6, 8),
+                ("pulire_garage", "Pulire il garage", 15, 30)
             ]
             for t in default_tasks:
                 cur.execute(
