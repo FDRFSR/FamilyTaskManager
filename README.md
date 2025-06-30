@@ -1,66 +1,66 @@
 # Family Task Manager Bot
 
-Gestisci le task familiari in modo moderno, robusto e collaborativo direttamente su Telegram!
+Manage your family chores in a modern, robust, and collaborative way directly on Telegram!
 
-## 🚀 Funzionalità principali
-- **Menu interattivo** con emoji e navigazione a due livelli (categorie → task)
-- **Assegnazione e completamento task** con persistenza su PostgreSQL Railway
-- **Leaderboard** e **statistiche** sempre aggiornate
-- **Gestione membri** automatica (aggiunta su ogni messaggio)
-- **Storico task completate** e riassegnazione task già svolte
-- **UI moderna**: pulsanti, callback, feedback visivi
-- **Logging** dettagliato per debugging e monitoring
-- **Pronto per deploy cloud** (Railway, Heroku, ecc.)
+## 🚀 Main Features
+- **Interactive menu** with emoji and two-level navigation (categories → tasks)
+- **Task assignment and completion** with persistence on PostgreSQL Railway
+- **Leaderboard** and **statistics** always up-to-date
+- **Automatic member management** (auto-add on every message)
+- **Completed task history** and re-assignable tasks
+- **Modern UI**: buttons, callbacks, visual feedback
+- **Detailed logging** for debugging and monitoring
+- **Cloud-ready deploy** (Railway, Heroku, etc.)
 
-## 🛠️ Setup rapido
-1. **Clona il repository**
-2. Crea un bot Telegram e ottieni il token
-3. Crea un database PostgreSQL (es. Railway) e imposta la variabile `DATABASE_URL`
-4. Esporta le variabili d'ambiente:
+## 🛠️ Quick Setup
+1. **Clone the repository**
+2. Create a Telegram bot and get the token
+3. Create a PostgreSQL database (e.g. Railway) and set the `DATABASE_URL` variable
+4. Export environment variables:
    ```bash
-   export TELEGRAM_TOKEN=il_tuo_token
+   export TELEGRAM_TOKEN=your_token
    export DATABASE_URL=postgresql://user:pass@host/db
    ```
-5. Installa le dipendenze:
+5. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-6. Avvia il bot:
+6. Start the bot:
    ```bash
    python main.py
    ```
 
-## 📋 Comandi principali
-- `/start` — Mostra il menu principale
-- `/tasks` — Elenco task per categoria
-- `/mytasks` — Le tue task assegnate
-- `/leaderboard` — Classifica famiglia
-- `/stats` — Le tue statistiche
-- `/help` — Aiuto e info
+## 📋 Main Commands
+- `/start` — Show the main menu
+- `/tasks` — List tasks by category
+- `/mytasks` — Your assigned tasks
+- `/leaderboard` — Family leaderboard
+- `/stats` — Your statistics
+- `/help` — Help and info
 
-## 🗄️ Struttura database
-- **tasks**: elenco task disponibili
-- **assigned_tasks**: task attualmente assegnate
-- **completed_tasks**: storico task completate (per punti/statistiche)
-- **families, family_members**: gestione gruppi e membri
+## 🗄️ Database Structure
+- **tasks**: available tasks
+- **assigned_tasks**: currently assigned tasks
+- **completed_tasks**: completed task history (for points/statistics)
+- **families, family_members**: group and member management
 
-## 🧑‍💻 Sviluppo e test
-- Tutto il codice è modularizzato (`main.py`, `bot_handlers.py`, `db.py`)
-- Test automatici: `test_assignment.py`, `test_bot.py`, ecc.
-- Schema SQL in `schema.sql`
+## 🧑‍💻 Development & Testing
+- All code is modularized (`main.py`, `bot_handlers.py`, `db.py`)
+- Automated tests: `test_assignment.py`, `test_bot.py`, etc.
+- SQL schema in `schema.sql`
 
-## 🏆 Best practice
-- Task completate vengono storicizzate e poi riassegnabili
-- Statistiche e leaderboard calcolate solo su task realmente completate
-- UI sempre funzionante, anche in caso di errori
+## 🏆 Best Practices
+- Completed tasks are archived and then re-assignable
+- Statistics and leaderboard are calculated only on actually completed tasks
+- UI always works, even in case of errors
 
-## 📦 Deploy su Railway
-- Imposta le variabili d'ambiente su Railway
-- Usa il `Procfile` per avvio automatico
+## 📦 Deploy on Railway
+- Set environment variables on Railway
+- Use the `Procfile` for automatic startup
 
-## 📄 Licenza
+## 📄 License
 MIT
 
 ---
 
-**Family Task Manager Bot** — Progetto open source per la gestione smart delle attività familiari su Telegram.
+**Family Task Manager Bot** — Open source project for smart family task management on Telegram.
