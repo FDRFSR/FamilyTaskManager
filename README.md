@@ -58,6 +58,40 @@ Manage your family chores in a modern, robust, and collaborative way directly on
 - Set environment variables on Railway
 - Use the `Procfile` for automatic startup
 
+## 📝 Default Tasks
+The following tasks are automatically available after a database reset:
+
+- Pulizia cucina
+- Pulizia bagno
+- Portare fuori la spazzatura
+- Fare il bucato
+- Cura del giardino
+- Fare la spesa
+- Preparare la cena
+- Riordinare la camera
+- Dare da mangiare agli animali
+- Lavare l'auto
+- Caricare lavastoviglie
+- Stendere il bucato
+- Passare l’aspirapolvere
+- Svuotare la lavastoviglie
+- Riordinare il soggiorno
+- Buttare la carta/vetro/plastica
+- Fare i letti
+- Preparare la tavola
+- Sparecchiare la tavola
+- Pulire la lettiera del gatto
+- Pulire il garage
+
+You can customize these by editing the `default_tasks` list in `db.py`.
+
+## 🛠️ Customizing Tasks
+To add or modify default tasks, edit the `default_tasks` list in the `_load_tasks_from_db` method of `db.py`. Each task has:
+- `id`: unique string (e.g. "cucina_pulizia")
+- `name`: display name
+- `points`: points awarded
+- `time_minutes`: estimated time
+
 ## 📄 License
 MIT
 
