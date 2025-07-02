@@ -3,6 +3,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 import logging
 from db import FamilyTaskDB
+from main import send_and_track_message
 
 db = FamilyTaskDB()
 logger = logging.getLogger(__name__)
@@ -11,7 +12,6 @@ class FamilyTaskBot:
     async def start(self, update, context):
         user = update.effective_user
         chat_id = update.effective_chat.id
-        # Fix: supporta sia messaggi che /start da bottoni (callback)
         try:
             db.add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
@@ -26,11 +26,10 @@ class FamilyTaskBot:
             ["ℹ️ Help"]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        # Gestione robusta: supporta sia messaggi che callback
         if update.message:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+            await send_and_track_message(update.message.reply_text, text, reply_markup=reply_markup)
         elif update.callback_query:
-            await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+            await send_and_track_message(update.callback_query.message.reply_text, text, reply_markup=reply_markup)
 
     async def help_command(self, update, context):
         text = (
@@ -42,25 +41,25 @@ class FamilyTaskBot:
             "/tasks - Elenco task disponibili\n"
             "/mytasks - Le tue task assegnate\n"
         )
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
     async def leaderboard(self, update, context):
         chat_id = update.effective_chat.id
         leaderboard = db.get_leaderboard(chat_id)
         if not leaderboard:
-            await update.message.reply_text("Nessuna classifica disponibile per questa famiglia.")
+            await send_and_track_message(update.message.reply_text, "Nessuna classifica disponibile per questa famiglia.")
             return
         text = "🏆 *Classifica Famiglia*\n\n"
         for i, entry in enumerate(leaderboard, 1):
             pos = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}°"
             text += f"{pos} {entry['first_name']}: {entry['total_points']} punti (Lv.{entry['level']}, {entry['tasks_completed']} task)\n"
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
     async def stats(self, update, context):
         user = update.effective_user
         stats = db.get_user_stats(user.id)
         if not stats:
-            await update.message.reply_text("Nessuna statistica trovata. Completa una task per iniziare!")
+            await send_and_track_message(update.message.reply_text, "Nessuna statistica trovata. Completa una task per iniziare!")
             return
         text = (
             f"📊 *Le tue statistiche*\n\n"
@@ -70,10 +69,9 @@ class FamilyTaskBot:
             f"🏅 Livello: {stats['level']}\n"
             f"🔥 Streak: {stats['streak']}\n"
         )
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
     async def show_tasks(self, update, context):
-        # Mostra solo le categorie come pulsanti
         categories = [
             ("Pulizie", "🧹"),
             ("Cucina", "🍽️"),
@@ -89,14 +87,14 @@ class FamilyTaskBot:
             for cat, emoji in categories
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("📋 *Scegli una categoria di task:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await send_and_track_message(update.message.reply_text, "📋 *Scegli una categoria di task:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def my_tasks(self, update, context):
         user = update.effective_user
         chat_id = update.effective_chat.id
         tasks = db.get_user_assigned_tasks(chat_id, user.id)
         if not tasks:
-            await update.message.reply_text("Non hai task assegnate!")
+            await send_and_track_message(update.message.reply_text, "Non hai task assegnate!")
             return
         text = "📝 *Le tue task assegnate:*\n\n"
         keyboard = []
@@ -106,7 +104,7 @@ class FamilyTaskBot:
                 InlineKeyboardButton(f"✅ Completa '{task['name']}'", callback_data=f"complete_{task['task_id']}")
             ])
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def assign_task_menu(self, update, context):
         chat_id = update.effective_chat.id

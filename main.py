@@ -1,12 +1,33 @@
 import os
 import sys
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, JobQueue
+import asyncio
 from bot_handlers import FamilyTaskBot
 from db import FamilyTaskDB
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# In-memory store for sent messages (chat_id, message_id)
+sent_messages = set()
+
+async def send_and_track_message(message_func, *args, **kwargs):
+    msg = await message_func(*args, **kwargs)
+    try:
+        sent_messages.add((msg.chat_id, msg.message_id))
+    except Exception:
+        pass
+    return msg
+
+async def delete_old_messages(context):
+    global sent_messages
+    for chat_id, message_id in list(sent_messages):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:
+            pass
+    sent_messages.clear()
 
 if __name__ == "__main__":
     TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -26,6 +47,10 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("mytasks", bot.my_tasks))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+
+    # Job per cancellare i messaggi ogni 15 minuti
+    job_queue = application.job_queue
+    job_queue.run_repeating(delete_old_messages, interval=900, first=900)
 
     logger.info("Bot Family Task Manager avviato. In ascolto...")
     application.run_polling()
