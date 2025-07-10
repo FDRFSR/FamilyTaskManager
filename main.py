@@ -5,29 +5,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import asyncio
 from bot_handlers import FamilyTaskBot
 from db import FamilyTaskDB
+from utils import delete_old_messages
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# In-memory store for sent messages (chat_id, message_id)
-sent_messages = set()
-
-async def send_and_track_message(message_func, *args, **kwargs):
-    msg = await message_func(*args, **kwargs)
-    try:
-        sent_messages.add((msg.chat_id, msg.message_id))
-    except Exception:
-        pass
-    return msg
-
-async def delete_old_messages(context):
-    global sent_messages
-    for chat_id, message_id in list(sent_messages):
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-        except Exception:
-            pass
-    sent_messages.clear()
 
 if __name__ == "__main__":
     TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
