@@ -3,17 +3,48 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 import logging
 from db import FamilyTaskDB
-from main import send_and_track_message
+from utils import send_and_track_message
 
-db = FamilyTaskDB()
 logger = logging.getLogger(__name__)
 
 class FamilyTaskBot:
+    def __init__(self):
+        self.db = None
+        
+    def get_db(self):
+        """Lazy initialization of database connection"""
+        if self.db is None:
+            self.db = FamilyTaskDB()
+        return self.db
+        
+    # Categories configuration to avoid duplication
+    CATEGORIES = [
+        ("Pulizie", "🧹"),
+        ("Cucina", "🍽️"),
+        ("Spesa", "🛒"),
+        ("Bucato", "🧺"),
+        ("Giardino", "🌳"),
+        ("Animali", "🐾"),
+        ("Auto", "🚗"),
+        ("Altro", "📦")
+    ]
+    
+    # Category mapping for filtering tasks
+    CATEGORY_MAP = {
+        "pulizie": lambda n: "pulizia" in n or "pulire" in n or "spolverare" in n or "aspirapolvere" in n or "scale" in n,
+        "cucina": lambda n: "cucina" in n or "cena" in n or "forno" in n or "frigorifero" in n or "lavastoviglie" in n or "tavola" in n,
+        "spesa": lambda n: "spesa" in n or "dispensa" in n,
+        "bucato": lambda n: "bucato" in n or "lenzuola" in n or "stendere" in n,
+        "giardino": lambda n: "giardino" in n or "piante" in n or "foglie" in n,
+        "animali": lambda n: "animali" in n or "lettiera" in n or "gatto" in n,
+        "auto": lambda n: "auto" in n,
+        "altro": lambda n: True
+    }
     async def start(self, update, context):
         user = update.effective_user
         chat_id = update.effective_chat.id
         try:
-            db.add_family_member(chat_id, user.id, user.username, user.first_name)
+            self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
             logger.error(f"Errore add_family_member: {e}")
         text = (
@@ -45,7 +76,7 @@ class FamilyTaskBot:
 
     async def leaderboard(self, update, context):
         chat_id = update.effective_chat.id
-        leaderboard = db.get_leaderboard(chat_id)
+        leaderboard = self.get_db().get_leaderboard(chat_id)
         if not leaderboard:
             await send_and_track_message(update.message.reply_text, "Nessuna classifica disponibile per questa famiglia.")
             return
@@ -57,7 +88,7 @@ class FamilyTaskBot:
 
     async def stats(self, update, context):
         user = update.effective_user
-        stats = db.get_user_stats(user.id)
+        stats = self.get_db().get_user_stats(user.id)
         if not stats:
             await send_and_track_message(update.message.reply_text, "Nessuna statistica trovata. Completa una task per iniziare!")
             return
@@ -72,19 +103,9 @@ class FamilyTaskBot:
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
     async def show_tasks(self, update, context):
-        categories = [
-            ("Pulizie", "🧹"),
-            ("Cucina", "🍽️"),
-            ("Spesa", "🛒"),
-            ("Bucato", "🧺"),
-            ("Giardino", "🌳"),
-            ("Animali", "🐾"),
-            ("Auto", "🚗"),
-            ("Altro", "📦")
-        ]
         keyboard = [
             [InlineKeyboardButton(f"{emoji} {cat}", callback_data=f"cat_{cat.lower()}")]
-            for cat, emoji in categories
+            for cat, emoji in self.CATEGORIES
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_and_track_message(update.message.reply_text, "📋 *Scegli una categoria di task:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
@@ -92,7 +113,7 @@ class FamilyTaskBot:
     async def my_tasks(self, update, context):
         user = update.effective_user
         chat_id = update.effective_chat.id
-        tasks = db.get_user_assigned_tasks(chat_id, user.id)
+        tasks = self.get_db().get_user_assigned_tasks(chat_id, user.id)
         if not tasks:
             await send_and_track_message(update.message.reply_text, "Non hai task assegnate!")
             return
@@ -109,8 +130,8 @@ class FamilyTaskBot:
     async def assign_task_menu(self, update, context):
         chat_id = update.effective_chat.id
         user = update.effective_user
-        db.add_family_member(chat_id, user.id, user.username, user.first_name)
-        tasks = db.get_all_tasks()
+        self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
+        tasks = self.get_db().get_all_tasks()
         keyboard = []
         for task in tasks:
             keyboard.append([
@@ -132,7 +153,7 @@ class FamilyTaskBot:
             await query.edit_message_text("Menu principale. Usa i comandi o il menu.")
         elif data.startswith("assign_"):
             task_id = data.replace("assign_", "")
-            members = db.get_family_members(chat_id)
+            members = self.get_db().get_family_members(chat_id)
             if not members:
                 await query.edit_message_text("Nessun membro famiglia trovato. Usa /start da ogni account!")
                 return
@@ -143,14 +164,14 @@ class FamilyTaskBot:
                 ])
             keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            task = db.get_task_by_id(task_id)
+            task = self.get_db().get_task_by_id(task_id)
             await query.edit_message_text(
                 f"*A chi vuoi assegnare:*\n\n📋 {task['name']} ({task['points']}pt)",
                 parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         elif data.startswith("doassign_"):
             _, task_id, target_id = data.split("_", 2)
             try:
-                db.assign_task(chat_id, task_id, int(target_id), user_id)
+                self.get_db().assign_task(chat_id, task_id, int(target_id), user_id)
                 await query.edit_message_text("✅ Task assegnata con successo!")
             except ValueError:
                 await query.edit_message_text("❌ Task già assegnata a questo utente!")
@@ -167,7 +188,7 @@ class FamilyTaskBot:
             chat_id = query.message.chat.id
             try:
                 # Usa la logica reale di completamento
-                ok = db.complete_task(chat_id, task_id, user_id)
+                ok = self.get_db().complete_task(chat_id, task_id, user_id)
                 if ok:
                     await query.edit_message_text("🎉 Task completata! Ottimo lavoro.")
                 else:
@@ -176,19 +197,9 @@ class FamilyTaskBot:
                 await query.edit_message_text(f"❌ Errore nel completamento: {exc}")
         elif data.startswith("cat_"):
             cat = data.replace("cat_", "")
-            tasks = db.get_all_tasks()
+            tasks = self.get_db().get_all_tasks()
             # Raggruppa le task per categoria
-            cat_map = {
-                "pulizie": lambda n: "pulizia" in n,
-                "cucina": lambda n: "cucina" in n or "cena" in n,
-                "spesa": lambda n: "spesa" in n,
-                "bucato": lambda n: "bucato" in n,
-                "giardino": lambda n: "giardino" in n,
-                "animali": lambda n: "animali" in n,
-                "auto": lambda n: "auto" in n,
-                "altro": lambda n: True
-            }
-            filtered = [t for t in tasks if cat_map.get(cat, lambda n: False)(t['name'].lower())]
+            filtered = [t for t in tasks if self.CATEGORY_MAP.get(cat, lambda n: False)(t['name'].lower())]
             if not filtered:
                 await query.edit_message_text(f"Nessuna task trovata per {cat.title()}.")
                 return
@@ -201,19 +212,9 @@ class FamilyTaskBot:
             await query.edit_message_text(f"*{cat.title()}* - Scegli una task:", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         elif data == "tasks_menu":
             # Torna al menu categorie
-            categories = [
-                ("Pulizie", "🧹"),
-                ("Cucina", "🍽️"),
-                ("Spesa", "🛒"),
-                ("Bucato", "🧺"),
-                ("Giardino", "🌳"),
-                ("Animali", "🐾"),
-                ("Auto", "🚗"),
-                ("Altro", "📦")
-            ]
             keyboard = [
                 [InlineKeyboardButton(f"{emoji} {cat}", callback_data=f"cat_{cat.lower()}")]
-                for cat, emoji in categories
+                for cat, emoji in self.CATEGORIES
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("📋 *Scegli una categoria di task:*", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
@@ -224,7 +225,7 @@ class FamilyTaskBot:
         user = update.effective_user
         chat_id = update.effective_chat.id
         try:
-            db.add_family_member(chat_id, user.id, user.username, user.first_name)
+            self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
             logger.error(f"Errore auto-add membro su messaggio: {e}")
         text = update.message.text.lower()
@@ -252,10 +253,10 @@ class FamilyTaskBot:
 
     # async def assign_category_menu(self, query, catid):
     #     """Mostra le task della categoria scelta, indicando se già assegnate"""
-    #     tasks = db.get_default_tasks()
+    #     tasks = self.get_db().get_default_tasks()
     #     chat_id = query.message.chat.id
-    #     assigned = db.get_assigned_tasks_for_chat(chat_id)
-    #     members = {m['user_id']: m['first_name'] for m in db.get_family_members(chat_id)}
+    #     assigned = self.get_db().get_assigned_tasks_for_chat(chat_id)
+    #     members = {m['user_id']: m['first_name'] for m in self.get_db().get_family_members(chat_id)}
     #     assigned_map = {}
     #     for v in assigned:
     #         assigned_map.setdefault(v['task_id'], []).append(members.get(v['assigned_to'], str(v['assigned_to'])))
@@ -282,8 +283,8 @@ class FamilyTaskBot:
         """Mostra i membri della famiglia per scegliere a chi assegnare la task"""
         chat_id = query.message.chat.id
         current_user = query.from_user.id
-        members = db.get_family_members(chat_id)
-        already_assigned = [a['assigned_to'] for a in db.get_assigned_tasks_for_chat(chat_id) if a['task_id'] == task_id]
+        members = self.get_db().get_family_members(chat_id)
+        already_assigned = [a['assigned_to'] for a in self.get_db().get_assigned_tasks_for_chat(chat_id) if a['task_id'] == task_id]
         keyboard = []
         if current_user not in already_assigned:
             keyboard.append([InlineKeyboardButton("🫵 Assegna a me", callback_data=f"assign_self_{task_id}")])
@@ -295,7 +296,7 @@ class FamilyTaskBot:
                 keyboard.append([InlineKeyboardButton(f"✅ {m['first_name']} (già assegnata)", callback_data="none")])
         keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        task = db.get_task_by_id(task_id)
+        task = self.get_db().get_task_by_id(task_id)
         message_text = (
             f"*🎯 A chi vuoi assegnare:*\n\n"
             f"📋 **{task['name']}**\n"
@@ -313,8 +314,8 @@ class FamilyTaskBot:
         chat_id = query.message.chat.id
         assigned_by = query.from_user.id
         try:
-            db.assign_task(chat_id, task_id, target_user_id, assigned_by)
-            members = db.get_family_members(chat_id)
+            self.get_db().assign_task(chat_id, task_id, target_user_id, assigned_by)
+            members = self.get_db().get_family_members(chat_id)
             target_member = next((m for m in members if m['user_id'] == target_user_id), None)
             if target_user_id == assigned_by:
                 target_name = "te stesso"
@@ -326,7 +327,7 @@ class FamilyTaskBot:
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            task = db.get_task_by_id(task_id)
+            task = self.get_db().get_task_by_id(task_id)
             success_message = (
                 f"✅ *Task Assegnata con Successo!*\n\n"
                 f"📋 **{task['name']}**\n"

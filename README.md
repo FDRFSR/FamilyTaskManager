@@ -83,6 +83,26 @@ The following tasks are automatically available after a database reset:
 - Sparecchiare la tavola
 - Pulire la lettiera del gatto
 - Pulire il garage
+- Pulire le finestre
+- Organizzare gli armadi
+- Pulire il frigorifero
+- Innaffiare le piante
+- Pulire gli specchi
+- Cambiare le lenzuola
+- Pulire il forno
+- Raccogliere le foglie
+- Pulire il balcone
+- Organizzare la cantina
+- Pulire le scarpe
+- Spolverare i mobili
+- Pulire gli elettrodomestici
+- Riordinare la scrivania
+- Pulire i tappeti
+- Organizzare il garage
+- Pulire le scale
+- Cambiare i filtri dell'aria
+- Pulire i ventilatori
+- Organizzare la dispensa
 
 You can customize these by editing the `default_tasks` list in `db.py`.
 
