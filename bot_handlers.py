@@ -17,6 +17,17 @@ class FamilyTaskBot:
             self.db = FamilyTaskDB()
         return self.db
         
+    def _is_uncategorized_task(self, task_name_lower):
+        """Check if a task doesn't belong to any specific category"""
+        # Check categories in priority order (same as CATEGORY_MAP)
+        priority_categories = ["animali", "cucina", "spesa", "pulizie", "bucato", "giardino", "auto", "casa"]
+        
+        for cat_key in priority_categories:
+            if cat_key in self.CATEGORY_MAP:
+                if self.CATEGORY_MAP[cat_key](task_name_lower):
+                    return False
+        return True
+        
     # Categories configuration to avoid duplication
     CATEGORIES = [
         ("Pulizie", "🧹"),
@@ -26,19 +37,21 @@ class FamilyTaskBot:
         ("Giardino", "🌳"),
         ("Animali", "🐾"),
         ("Auto", "🚗"),
+        ("Casa", "🏠"),
         ("Altro", "📦")
     ]
     
-    # Category mapping for filtering tasks
+    # Category mapping for filtering tasks - ordered by priority to avoid overlaps
     CATEGORY_MAP = {
-        "pulizie": lambda n: "pulizia" in n or "pulire" in n or "spolverare" in n or "aspirapolvere" in n or "scale" in n,
-        "cucina": lambda n: "cucina" in n or "cena" in n or "forno" in n or "frigorifero" in n or "lavastoviglie" in n or "tavola" in n,
-        "spesa": lambda n: "spesa" in n or "dispensa" in n,
+        "animali": lambda n: "animali" in n or ("lettiera" in n and "gatto" in n),
+        "cucina": lambda n: ("cucina" in n and "pulizia" not in n) or "cena" in n or ("forno" in n and "pulire" not in n) or ("frigorifero" in n and "pulire" not in n) or "lavastoviglie" in n or "tavola" in n,
+        "spesa": lambda n: ("spesa" in n) or ("dispensa" in n and "organizzare" not in n),
+        "pulizie": lambda n: "pulizia" in n or "pulire" in n or "spolverare" in n or "aspirapolvere" in n or ("scale" in n and "pulire" in n),
         "bucato": lambda n: "bucato" in n or "lenzuola" in n or "stendere" in n,
         "giardino": lambda n: "giardino" in n or "piante" in n or "foglie" in n,
-        "animali": lambda n: "animali" in n or "lettiera" in n or "gatto" in n,
         "auto": lambda n: "auto" in n,
-        "altro": lambda n: True
+        "casa": lambda n: "riordinare" in n or "organizzare" in n or "fare i letti" in n or "spazzatura" in n or "buttare" in n or "cambiare i filtri" in n or "rifiuti" in n,
+        "altro": lambda n: self._is_uncategorized_task(n)
     }
     async def start(self, update, context):
         user = update.effective_user
@@ -198,8 +211,29 @@ class FamilyTaskBot:
         elif data.startswith("cat_"):
             cat = data.replace("cat_", "")
             tasks = self.get_db().get_all_tasks()
-            # Raggruppa le task per categoria
-            filtered = [t for t in tasks if self.CATEGORY_MAP.get(cat, lambda n: False)(t['name'].lower())]
+            
+            # Use priority-based filtering to avoid overlaps
+            if cat == "altro":
+                # Special handling for "Altro" category - only uncategorized tasks
+                filtered = [t for t in tasks if self._is_uncategorized_task(t['name'].lower())]
+            else:
+                # For other categories, use priority order to avoid overlaps
+                filtered = []
+                priority_categories = ["animali", "cucina", "spesa", "pulizie", "bucato", "giardino", "auto", "casa"]
+                
+                for task in tasks:
+                    task_name_lower = task['name'].lower()
+                    # Find the first matching category in priority order
+                    assigned_category = None
+                    for pcat in priority_categories:
+                        if pcat in self.CATEGORY_MAP and self.CATEGORY_MAP[pcat](task_name_lower):
+                            assigned_category = pcat
+                            break
+                    
+                    # Only include task if it belongs to the requested category
+                    if assigned_category == cat:
+                        filtered.append(task)
+            
             if not filtered:
                 await query.edit_message_text(f"Nessuna task trovata per {cat.title()}.")
                 return
