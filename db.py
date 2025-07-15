@@ -38,11 +38,8 @@ class FamilyTaskDB:
     def _load_tasks_from_db(self):
         with self.get_db_connection() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
-            rows = cur.fetchall()
-            if not rows:
-                # Se il DB è vuoto, inserisci task di default
-                default_tasks = [
+            # Task di default sempre sincronizzate
+            default_tasks = [
                 ("cucina_pulizia", "Pulizia cucina", 10, 20),
                 ("bagno_pulizia", "Pulizia bagno", 12, 25),
                 ("spazzatura", "Portare fuori la spazzatura", 5, 5),
@@ -64,7 +61,6 @@ class FamilyTaskDB:
                 ("sparecchiare_tavola", "Sparecchiare la tavola", 4, 5),
                 ("lettiera_gatto", "Pulire la lettiera del gatto", 6, 8),
                 ("pulire_garage", "Pulire il garage", 15, 30),
-                # Nuove attività aggiunte
                 ("pulire_finestre", "Pulire le finestre", 10, 20),
                 ("organizzare_armadi", "Organizzare gli armadi", 12, 25),
                 ("pulire_frigorifero", "Pulire il frigorifero", 8, 15),
@@ -85,19 +81,19 @@ class FamilyTaskDB:
                 ("cambiare_filtri", "Cambiare i filtri dell'aria", 8, 20),
                 ("pulire_ventilatori", "Pulire i ventilatori", 6, 15),
                 ("organizzare_dispensa", "Organizzare la dispensa", 10, 25)
-                ]
-                for t in default_tasks:
-                    cur.execute(
-                        "INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING;",
-                        t
-                    )
-                conn.commit()
-                cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
-                rows = cur.fetchall()
-            self._tasks = [
-                {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
-                for row in rows
             ]
+            for t in default_tasks:
+                cur.execute(
+                    "INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING;",
+                    t
+                )
+            conn.commit()
+            cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
+            rows = cur.fetchall()
+        self._tasks = [
+            {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
+            for row in rows
+        ]
 
     def add_family_member(self, chat_id, user_id, username, first_name):
         try:
