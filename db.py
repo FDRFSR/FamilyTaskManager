@@ -122,19 +122,26 @@ class FamilyTaskDB:
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
+                # Verifica se la task è già assegnata a questo utente
+                cur.execute(
+                    """
+                    SELECT 1 FROM assigned_tasks 
+                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
+                    """,
+                    (chat_id, task_id, assigned_to)
+                )
+                already_assigned = cur.fetchone()
+                if already_assigned:
+                    raise ValueError("Task già assegnata a questo utente!")
+                # Se non è assegnata, inserisci la nuova assegnazione
                 cur.execute(
                     """
                     INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status)
-                    VALUES (%s, %s, %s, %s, NOW(), 'assigned')
-                    ON CONFLICT (chat_id, task_id, assigned_to) DO NOTHING;
+                    VALUES (%s, %s, %s, %s, NOW(), 'assigned');
                     """,
                     (chat_id, task_id, assigned_to, assigned_by)
                 )
-                inserted = cur.rowcount
                 conn.commit()
-                if inserted == 0:
-                    # Task già assegnata a questo utente
-                    raise ValueError("Task già assegnata a questo utente!")
         except ValueError:
             raise
         except Exception as e:
