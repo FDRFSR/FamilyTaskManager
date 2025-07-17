@@ -172,8 +172,9 @@ class FamilyTaskBot:
                 return
             keyboard = []
             for m in members:
+                # Corretto: user_id deve essere sempre un intero
                 keyboard.append([
-                    InlineKeyboardButton(f"👤 {m['first_name']}", callback_data=f"doassign_{task_id}_{m['user_id']}")
+                    InlineKeyboardButton(f"👤 {m['first_name']}", callback_data=f"doassign_{m['user_id']}_{task_id}")
                 ])
             keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -183,12 +184,12 @@ class FamilyTaskBot:
                 parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         elif data.startswith("doassign_"):
             try:
-                _, task_id, target_id = data.split("_", 2)
-                # Validazione robusta: target_id deve essere int
-                if not target_id.isdigit():
-                    await query.edit_message_text(f"❌ Errore: ID utente non valido ({target_id})")
+                _, assigned_to, task_id = data.split("_", 2)
+                # Validazione robusta: assigned_to deve essere int
+                if not assigned_to.isdigit():
+                    await query.edit_message_text(f"❌ Errore: ID utente non valido ({assigned_to})")
                     return
-                self.get_db().assign_task(chat_id, task_id, int(target_id), user_id)
+                self.get_db().assign_task(chat_id, task_id, int(assigned_to), user_id)
                 await query.edit_message_text("✅ Task assegnata con successo!")
             except Exception as exc:
                 await query.edit_message_text(f"❌ Errore nell'assegnazione: {exc}")
