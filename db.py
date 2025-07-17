@@ -122,18 +122,7 @@ class FamilyTaskDB:
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
-                # Verifica se la task è già assegnata a questo utente
-                cur.execute(
-                    """
-                    SELECT 1 FROM assigned_tasks 
-                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
-                    """,
-                    (chat_id, task_id, assigned_to)
-                )
-                already_assigned = cur.fetchone()
-                if already_assigned:
-                    raise ValueError("Task già assegnata a questo utente!")
-                # Se non è assegnata, inserisci la nuova assegnazione
+                # Bypass: consenti assegnazione multipla
                 cur.execute(
                     """
                     INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status)
@@ -142,8 +131,6 @@ class FamilyTaskDB:
                     (chat_id, task_id, assigned_to, assigned_by)
                 )
                 conn.commit()
-        except ValueError:
-            raise
         except Exception as e:
             logger.error(f"Errore in assign_task: {e}")
             raise
