@@ -211,6 +211,8 @@ class FamilyTaskBot:
         elif data.startswith("cat_"):
             cat = data.replace("cat_", "")
             tasks = self.get_db().get_all_tasks()
+            assigned = self.get_db().get_assigned_tasks_for_chat(chat_id)
+            assigned_task_ids = set(a['task_id'] for a in assigned)
             
             # Use priority-based filtering to avoid overlaps
             if cat == "altro":
@@ -220,27 +222,24 @@ class FamilyTaskBot:
                 # For other categories, use priority order to avoid overlaps
                 filtered = []
                 priority_categories = ["animali", "cucina", "spesa", "pulizie", "bucato", "giardino", "auto", "casa"]
-                
                 for task in tasks:
                     task_name_lower = task['name'].lower()
-                    # Find the first matching category in priority order
                     assigned_category = None
                     for pcat in priority_categories:
                         if pcat in self.CATEGORY_MAP and self.CATEGORY_MAP[pcat](task_name_lower):
                             assigned_category = pcat
                             break
-                    
-                    # Only include task if it belongs to the requested category
                     if assigned_category == cat:
                         filtered.append(task)
-            
             if not filtered:
                 await query.edit_message_text(f"Nessuna task trovata per {cat.title()}.")
                 return
-            keyboard = [
-                [InlineKeyboardButton(f"{t['name']}", callback_data=f"assign_{t['id']}")]
-                for t in filtered
-            ]
+            keyboard = []
+            for t in filtered:
+                if t['id'] in assigned_task_ids:
+                    keyboard.append([InlineKeyboardButton(f"✅ {t['name']} (già assegnata)", callback_data="none")])
+                else:
+                    keyboard.append([InlineKeyboardButton(f"{t['name']}", callback_data=f"assign_{t['id']}")])
             keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="tasks_menu")])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(f"*{cat.title()}* - Scegli una task:", parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
