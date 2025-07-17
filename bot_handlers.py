@@ -186,8 +186,8 @@ class FamilyTaskBot:
             try:
                 self.get_db().assign_task(chat_id, task_id, int(target_id), user_id)
                 await query.edit_message_text("✅ Task assegnata con successo!")
-            except ValueError:
-                await query.edit_message_text("❌ Task già assegnata a questo utente!")
+            except Exception as exc:
+                await query.edit_message_text(f"❌ Errore nell'assegnazione: {exc}")
         elif data == "assign_menu":
             class DummyUpdate:
                 message = query.message
@@ -376,7 +376,5 @@ class FamilyTaskBot:
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=reply_markup
             )
-        except ValueError:
-            await query.edit_message_text("❌ Task già assegnata a questo utente!", parse_mode=ParseMode.MARKDOWN)
         except Exception as exc:
             await query.edit_message_text(f"❌ Errore nell'assegnazione: {exc}", parse_mode=ParseMode.MARKDOWN)
