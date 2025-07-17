@@ -265,3 +265,22 @@ class FamilyTaskDB:
         except Exception as e:
             logger.error(f"Errore in get_task_by_id: {e}")
             return None
+
+    def get_assigned_tasks_for_chat(self, chat_id):
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT a.task_id, a.assigned_to, t.name, t.points, t.time_minutes
+                    FROM assigned_tasks a
+                    JOIN tasks t ON a.task_id = t.id
+                    WHERE a.chat_id = %s AND a.status = 'assigned';
+                """, (chat_id,))
+                rows = cur.fetchall()
+                return [
+                    {"task_id": row[0], "assigned_to": row[1], "name": row[2], "points": row[3], "time_minutes": row[4]}
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Errore in get_assigned_tasks_for_chat: {e}")
+            return []

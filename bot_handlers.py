@@ -318,6 +318,7 @@ class FamilyTaskBot:
         chat_id = query.message.chat.id
         current_user = query.from_user.id
         members = self.get_db().get_family_members(chat_id)
+        # Usa solo assegnazioni effettive (status='assigned')
         already_assigned = [a['assigned_to'] for a in self.get_db().get_assigned_tasks_for_chat(chat_id) if a['task_id'] == task_id]
         keyboard = []
         if current_user not in already_assigned:
