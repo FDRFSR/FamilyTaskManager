@@ -43,14 +43,14 @@ class FamilyTaskBot:
     
     # Category mapping for filtering tasks - ordered by priority to avoid overlaps
     CATEGORY_MAP = {
-        "animali": lambda n: "animali" in n or ("lettiera" in n and "gatto" in n),
+        "animali": lambda n: "animali" in n or ("lettiera" in n and "gatto" in n) or "cane" in n or "toelettatura" in n,
         "cucina": lambda n: ("cucina" in n and "pulizia" not in n) or "cena" in n or ("forno" in n and "pulire" not in n) or ("frigorifero" in n and "pulire" not in n) or "lavastoviglie" in n or "tavola" in n,
-        "spesa": lambda n: ("spesa" in n) or ("dispensa" in n and "organizzare" not in n),
+        "spesa": lambda n: ("spesa" in n) or ("dispensa" in n and "organizzare" not in n) or "lista" in n,
         "pulizie": lambda n: "pulizia" in n or "pulire" in n or "spolverare" in n or "aspirapolvere" in n or ("scale" in n and "pulire" in n),
-        "bucato": lambda n: "bucato" in n or "lenzuola" in n or "stendere" in n,
-        "giardino": lambda n: "giardino" in n or "piante" in n or "foglie" in n,
-        "auto": lambda n: "auto" in n,
-        "casa": lambda n: "riordinare" in n or "organizzare" in n or "fare i letti" in n or "spazzatura" in n or "buttare" in n or "cambiare i filtri" in n or "rifiuti" in n,
+        "bucato": lambda n: "bucato" in n or "lenzuola" in n or "stendere" in n or "stirare" in n,
+        "giardino": lambda n: "giardino" in n or "piante" in n or "foglie" in n or "potare" in n,
+        "auto": lambda n: "auto" in n or "controllo" in n or "pressione" in n,
+        "casa": lambda n: "riordinare" in n or "organizzare" in n or "fare i letti" in n or "spazzatura" in n or "buttare" in n or "cambiare i filtri" in n or "rifiuti" in n or "backup" in n or "sicurezza" in n or "controllo" in n,
         "altro": lambda n: self._is_uncategorized_task(n)
     }
     async def start(self, update, context):
@@ -104,6 +104,7 @@ class FamilyTaskBot:
             "• `/mytasks` - Le tue task assegnate\n"
             "• `/leaderboard` - Classifica famiglia\n"
             "• `/stats` - Le tue statistiche\n"
+            "• `/history` - Cronologia attività famiglia\n"
             "• `/help` - Questa guida\n\n"
             "🎮 **Come funziona:**\n"
             "1️⃣ Scegli una categoria di task\n"
@@ -164,6 +165,40 @@ class FamilyTaskBot:
             )
             
         text += "💡 Completa più task per scalare la classifica!"
+        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
+
+    async def show_recent_activity(self, update, context):
+        """Show recent task completions for the family"""
+        chat_id = update.effective_chat.id
+        recent_completions = self.get_db().get_recent_completions(chat_id, 10)
+        
+        if not recent_completions:
+            text = (
+                "📜 **Cronologia Attività**\n\n"
+                "🚫 Nessuna task completata ancora!\n\n"
+                "💡 **Per iniziare:**\n"
+                "• Completa la tua prima task\n"
+                "• La cronologia apparirà qui\n\n"
+                "🎯 Ogni completamento viene registrato!"
+            )
+            await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
+            return
+        
+        text = "📜 **Cronologia Attività Famiglia**\n\n"
+        total_points = sum(c['points_earned'] for c in recent_completions)
+        text += f"📊 **Riassunto recente:** {len(recent_completions)} task, {total_points} punti\n\n"
+        
+        for i, completion in enumerate(recent_completions, 1):
+            # Format date nicely
+            date_str = completion['completed_date'].strftime("%d/%m alle %H:%M") if completion['completed_date'] else "Data sconosciuta"
+            
+            text += (
+                f"{i}. ✅ **{completion['task_name']}**\n"
+                f"   👤 {completion['first_name']} • ⭐ +{completion['points_earned']} pt\n"
+                f"   📅 {date_str}\n\n"
+            )
+        
+        text += "💡 Solo le ultime 10 attività vengono mostrate."
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
     async def stats(self, update, context):
@@ -753,6 +788,8 @@ class FamilyTaskBot:
                 "⚙️ **Menu Gestione**\n\nFunzionalità in arrivo:\n• Impostazioni famiglia\n• Task personalizzate\n• Notifiche\n\nUsa il menu principale per le funzioni disponibili.",
                 parse_mode=ParseMode.MARKDOWN
             )
+        elif text in ["/history", "history", "📜 cronologia", "cronologia"]:
+            await self.show_recent_activity(update, context)
         elif "assegna" in text:
             await self.show_tasks(update, context)  # Changed to show categories first
         elif "task" in text:

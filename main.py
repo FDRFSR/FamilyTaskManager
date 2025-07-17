@@ -26,6 +26,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("stats", bot.stats))
     application.add_handler(CommandHandler("tasks", bot.show_tasks))
     application.add_handler(CommandHandler("mytasks", bot.my_tasks))
+    application.add_handler(CommandHandler("history", bot.show_recent_activity))
     application.add_handler(CallbackQueryHandler(bot.button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
 

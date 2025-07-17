@@ -3,13 +3,15 @@
 Manage your family chores in a modern, robust, and collaborative way directly on Telegram!
 
 ## 🚀 Main Features
-- **Interactive menu** with emoji and two-level navigation (categories → tasks)
-- **Task assignment and completion** with persistence on PostgreSQL Railway
-- **Leaderboard** and **statistics** always up-to-date
+- **Enhanced interactive menu** with emoji, descriptions, and three-level navigation
+- **Smart task assignment** with confirmation dialogs and visual feedback
+- **Advanced statistics** with progress bars, performance badges, and level progression
+- **Comprehensive leaderboard** with detailed progress tracking
+- **Task categorization** with difficulty indicators (🟢 Easy, 🟡 Medium, 🔴 Hard)
+- **Activity history** and completed task tracking
 - **Automatic member management** (auto-add on every message)
-- **Completed task history** and re-assignable tasks
-- **Modern UI**: buttons, callbacks, visual feedback
-- **Automatic deletion of all bot messages** (text, callbacks, errors, etc.) every 15 minutes for privacy and chat cleanliness
+- **Modern UI**: enhanced buttons, callbacks, rich visual feedback
+- **Automatic deletion of all bot messages** every 15 minutes for privacy
 - **Detailed logging** for debugging and monitoring
 - **Cloud-ready deploy** (Railway, Heroku, etc.)
 
@@ -32,12 +34,13 @@ Manage your family chores in a modern, robust, and collaborative way directly on
    ```
 
 ## 📋 Main Commands
-- `/start` — Show the main menu
-- `/tasks` — List tasks by category
-- `/mytasks` — Your assigned tasks
-- `/leaderboard` — Family leaderboard
-- `/stats` — Your statistics
-- `/help` — Help and info
+- `/start` — Show the main menu with personalized welcome
+- `/tasks` — List tasks by category with statistics
+- `/mytasks` — Your assigned tasks with difficulty indicators
+- `/leaderboard` — Family leaderboard with detailed progress
+- `/stats` — Your statistics with performance badges
+- `/history` — Recent activity and task completion history
+- `/help` — Enhanced help and info guide
 
 ## 🗄️ Database Structure
 - **tasks**: available tasks
@@ -59,8 +62,8 @@ Manage your family chores in a modern, robust, and collaborative way directly on
 - Set environment variables on Railway
 - Use the `Procfile` for automatic startup
 
-## 📝 Default Tasks
-The following tasks are automatically available after a database reset:
+## 📝 Enhanced Task System
+The system now includes **51 comprehensive household tasks** organized into 9 categories with smart difficulty indicators and balanced point distribution. Tasks range from quick 5-minute activities to comprehensive 45-minute projects.
 
 - Pulizia cucina
 - Pulizia bagno

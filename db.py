@@ -80,7 +80,18 @@ class FamilyTaskDB:
                 ("pulire_scale", "Pulire le scale", 7, 15),
                 ("cambiare_filtri", "Cambiare i filtri dell'aria", 8, 20),
                 ("pulire_ventilatori", "Pulire i ventilatori", 6, 15),
-                ("organizzare_dispensa", "Organizzare la dispensa", 10, 25)
+                ("organizzare_dispensa", "Organizzare la dispensa", 10, 25),
+                # Additional tasks for better category balance
+                ("stirare", "Stirare i vestiti", 10, 30),
+                ("spesa_farmacia", "Spesa in farmacia", 5, 15),
+                ("lista_spesa", "Preparare lista della spesa", 3, 10),
+                ("potare_piante", "Potare le piante", 12, 30),
+                ("portare_cane", "Portare a spasso il cane", 5, 20),
+                ("toelettatura", "Toelettatura animali", 8, 25),
+                ("auto_interni", "Pulire interni auto", 8, 20),
+                ("controllo_auto", "Controllo pressione gomme", 5, 10),
+                ("backup_digitale", "Backup foto e documenti", 6, 15),
+                ("controllo_sicurezza", "Controllo allarmi e serrature", 8, 15)
             ]
             for t in default_tasks:
                 cur.execute(
@@ -252,6 +263,36 @@ class FamilyTaskDB:
         except Exception as e:
             logger.error(f"Errore in get_task_by_id: {e}")
             return None
+
+    def get_recent_completions(self, chat_id, limit=10):
+        """Get recent task completions for the family"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT c.task_id, t.name, c.assigned_to, fm.first_name, c.completed_date, c.points_earned
+                    FROM completed_tasks c
+                    JOIN tasks t ON c.task_id = t.id
+                    JOIN family_members fm ON c.assigned_to = fm.user_id AND c.chat_id = fm.chat_id
+                    WHERE c.chat_id = %s
+                    ORDER BY c.completed_date DESC
+                    LIMIT %s;
+                """, (chat_id, limit))
+                rows = cur.fetchall()
+                return [
+                    {
+                        "task_id": row[0],
+                        "task_name": row[1],
+                        "assigned_to": row[2],
+                        "first_name": row[3],
+                        "completed_date": row[4],
+                        "points_earned": row[5]
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Errore in get_recent_completions: {e}")
+            return []
 
     def get_assigned_tasks_for_chat(self, chat_id):
         try:
