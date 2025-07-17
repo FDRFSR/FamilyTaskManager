@@ -182,8 +182,12 @@ class FamilyTaskBot:
                 f"*A chi vuoi assegnare:*\n\n📋 {task['name']} ({task['points']}pt)",
                 parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         elif data.startswith("doassign_"):
-            _, task_id, target_id = data.split("_", 2)
             try:
+                _, task_id, target_id = data.split("_", 2)
+                # Validazione robusta: target_id deve essere int
+                if not target_id.isdigit():
+                    await query.edit_message_text(f"❌ Errore: ID utente non valido ({target_id})")
+                    return
                 self.get_db().assign_task(chat_id, task_id, int(target_id), user_id)
                 await query.edit_message_text("✅ Task assegnata con successo!")
             except Exception as exc:
