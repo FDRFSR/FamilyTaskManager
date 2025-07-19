@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # Aggiungi il path corrente per importare main.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from main import FamilyTaskDB
+from db import FamilyTaskDB
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
