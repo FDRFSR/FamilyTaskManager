@@ -223,14 +223,13 @@ class FamilyTaskBot:
         chat_id = update.effective_chat.id
         total_tasks = len(self.get_db().get_all_tasks())
         assigned_tasks = len(self.get_db().get_assigned_tasks_for_chat(chat_id))
-        available_tasks = total_tasks - assigned_tasks
         
         text = (
             "📋 **Scegli una categoria di task:**\n\n"
             f"📊 **Stato attuale:**\n"
             f"• 📦 Task totali: {total_tasks}\n"
-            f"• ✅ Task assegnate: {assigned_tasks}\n"
-            f"• 🆓 Task disponibili: {available_tasks}\n\n"
+            f"• ✅ Assegnazioni totali: {assigned_tasks}\n"
+            f"• 🆓 Tutte le task sono sempre disponibili per nuove assegnazioni\n\n"
             "👇 Seleziona una categoria per vedere le task disponibili:"
         )
         
@@ -239,7 +238,6 @@ class FamilyTaskBot:
             # Count tasks in this category
             tasks = self.get_db().get_all_tasks()
             assigned = self.get_db().get_assigned_tasks_for_chat(chat_id)
-            assigned_task_ids = set(a['task_id'] for a in assigned)
             
             if cat.lower() == "altro":
                 cat_tasks = [t for t in tasks if self._is_uncategorized_task(t['name'].lower())]
@@ -254,13 +252,15 @@ class FamilyTaskBot:
                                 cat_tasks.append(task)
                             break
             
-            available_in_cat = len([t for t in cat_tasks if t['id'] not in assigned_task_ids])
+            # Count assignments in this category
+            assigned_in_cat = len([a for a in assigned if any(t['id'] == a['task_id'] for t in cat_tasks)])
             total_in_cat = len(cat_tasks)
             
-            if available_in_cat > 0:
-                status = f"({available_in_cat}/{total_in_cat} disponibili)"
-            elif total_in_cat > 0:
-                status = "(tutte assegnate)"
+            if total_in_cat > 0:
+                if assigned_in_cat > 0:
+                    status = f"({assigned_in_cat} assegnaz.)"
+                else:
+                    status = f"({total_in_cat} disponibili)"
             else:
                 status = "(vuota)"
                 
@@ -375,7 +375,7 @@ class FamilyTaskBot:
                 await query.edit_message_text("❌ Task non trovata!")
                 return
             
-            # Check who already has this task assigned
+            # Check who already has this task assigned (for information display only)
             assigned_tasks = self.get_db().get_assigned_tasks_for_chat(chat_id)
             already_assigned_users = [a['assigned_to'] for a in assigned_tasks if a['task_id'] == task_id]
             
@@ -387,37 +387,57 @@ class FamilyTaskBot:
             else:
                 difficulty = "🔴 Difficile"
                 
+            # Show current assignments for information
+            assigned_names = []
+            for user_id in already_assigned_users:
+                member = next((m for m in members if m['user_id'] == user_id), None)
+                if member:
+                    assigned_names.append(member['first_name'])
+                else:
+                    assigned_names.append(f"Utente {user_id}")
+            
+            assignment_info = ""
+            if assigned_names:
+                assignment_info = f"\n👥 **Già assegnata a:** {', '.join(assigned_names)}\n"
+                
             text = (
                 f"🎯 **Assegna Task**\n\n"
                 f"📋 **{task['name']}**\n"
                 f"⭐ **Punti:** {task['points']}\n"
                 f"⏱️ **Tempo stimato:** ~{task['time_minutes']} minuti\n"
-                f"📊 **Difficoltà:** {difficulty}\n\n"
+                f"📊 **Difficoltà:** {difficulty}{assignment_info}\n"
                 f"👥 **Scegli a chi assegnare questa task:**\n"
+                f"💡 *Le task possono essere assegnate a più persone contemporaneamente*\n"
             )
             
             keyboard = []
             current_user = query.from_user.id
             
-            # Add self-assignment option if not already assigned
+            # Always show self-assignment option
             if current_user not in already_assigned_users:
                 keyboard.append([InlineKeyboardButton(
                     "🫵 Assegna a me stesso", 
                     callback_data=f"doassign_{current_user}_{task_id}"
                 )])
+            else:
+                keyboard.append([InlineKeyboardButton(
+                    "🫵 Già assegnata a me", 
+                    callback_data="none"
+                )])
             
-            # Add other family members
+            # Add other family members - always allow assignment
             for m in members:
-                if m['user_id'] in already_assigned_users:
-                    keyboard.append([InlineKeyboardButton(
-                        f"✅ {m['first_name']} (già assegnata)", 
-                        callback_data="none"
-                    )])
-                elif m['user_id'] != current_user:
-                    keyboard.append([InlineKeyboardButton(
-                        f"👤 Assegna a {m['first_name']}", 
-                        callback_data=f"doassign_{m['user_id']}_{task_id}"
-                    )])
+                if m['user_id'] != current_user:
+                    if m['user_id'] in already_assigned_users:
+                        keyboard.append([InlineKeyboardButton(
+                            f"✅ {m['first_name']} (già assegnata)", 
+                            callback_data="none"
+                        )])
+                    else:
+                        keyboard.append([InlineKeyboardButton(
+                            f"👤 Assegna a {m['first_name']}", 
+                            callback_data=f"doassign_{m['user_id']}_{task_id}"
+                        )])
             
             keyboard.append([InlineKeyboardButton("🔙 Indietro", callback_data="assign_menu")])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -463,6 +483,7 @@ class FamilyTaskBot:
                     f"💡 **Prossimi passi:**\n"
                     f"• La task appare ora nelle attività di {assignee_name}\n"
                     f"• Completa entro 3 giorni per ottimizzare il punteggio\n"
+                    f"• La stessa task può essere assegnata anche ad altri membri famiglia\n"
                     f"• Usa 📝 Le Mie Task per vedere tutte le tue attività"
                 )
                 
@@ -471,6 +492,38 @@ class FamilyTaskBot:
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=reply_markup
                 )
+            except ValueError as exc:
+                if "già assegnata" in str(exc):
+                    # Get task and assignee details for friendly error message
+                    task = self.get_db().get_task_by_id(task_id)
+                    members = self.get_db().get_family_members(chat_id)
+                    assignee = next((m for m in members if m['user_id'] == int(assigned_to)), None)
+                    
+                    if int(assigned_to) == user_id:
+                        assignee_name = "te stesso"
+                    else:
+                        assignee_name = assignee['first_name'] if assignee else f"Utente {assigned_to}"
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("🔙 Torna alle Task", callback_data="tasks_menu")],
+                        [InlineKeyboardButton("📝 Le Mie Task", callback_data="show_my_tasks")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await query.edit_message_text(
+                        f"ℹ️ **Task già assegnata**\n\n"
+                        f"📋 **{task['name']}**\n"
+                        f"👤 È già assegnata a {assignee_name}\n\n"
+                        f"💡 Ogni persona può avere la stessa task assegnata una sola volta, ma task diverse possono essere assegnate alla stessa persona.",
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await query.edit_message_text(
+                        f"❌ **Errore nell'assegnazione**\n\n"
+                        f"Dettagli: {exc}\n\n"
+                        "💡 Riprova o contatta l'amministratore se il problema persiste."
+                    )
             except Exception as exc:
                 await query.edit_message_text(
                     f"❌ **Errore nell'assegnazione**\n\n"
@@ -625,21 +678,20 @@ class FamilyTaskBot:
                 return
             
             # Calculate statistics
-            available_tasks = [t for t in filtered if t['id'] not in assigned_task_ids]
-            assigned_tasks = [t for t in filtered if t['id'] in assigned_task_ids]
-            total_points = sum(t['points'] for t in available_tasks)
-            avg_time = sum(t['time_minutes'] for t in available_tasks) // max(len(available_tasks), 1)
+            total_assignments_in_cat = len([a for a in assigned if any(t['id'] == a['task_id'] for t in filtered)])
+            total_points = sum(t['points'] for t in filtered)
+            avg_time = sum(t['time_minutes'] for t in filtered) // max(len(filtered), 1)
             
             text = (
                 f"{cat_emoji} **{cat_name}**\n\n"
                 f"📝 {cat_description}\n\n"
                 f"📊 **Statistiche categoria:**\n"
                 f"• 📦 Task totali: {len(filtered)}\n"
-                f"• 🆓 Disponibili: {len(available_tasks)}\n"
-                f"• ✅ Già assegnate: {len(assigned_tasks)}\n"
-                f"• ⭐ Punti disponibili: {total_points}\n"
+                f"• ✅ Assegnazioni attive: {total_assignments_in_cat}\n"
+                f"• ⭐ Punti totali disponibili: {total_points}\n"
                 f"• ⏱️ Tempo medio: ~{avg_time} min\n\n"
                 "👇 **Scegli una task da assegnare:**\n"
+                "💡 *Ogni task può essere assegnata a più persone*\n"
             )
             
             keyboard = []
@@ -656,16 +708,18 @@ class FamilyTaskBot:
                 else:
                     difficulty = "🔴"  # Hard
                 
-                if t['id'] in assigned_task_ids:
-                    keyboard.append([InlineKeyboardButton(
-                        f"✅ {t['name'][:30]}{'...' if len(t['name']) > 30 else ''} (assegnata)", 
-                        callback_data="none"
-                    )])
+                # Show assignment count instead of blocking assignment
+                assignment_count = len([a for a in assigned if a['task_id'] == t['id']])
+                if assignment_count > 0:
+                    status = f"({assignment_count} assegnaz.)"
                 else:
-                    keyboard.append([InlineKeyboardButton(
-                        f"{difficulty} {t['name'][:25]}{'...' if len(t['name']) > 25 else ''} ({t['points']}pt)", 
-                        callback_data=f"assign_{t['id']}"
-                    )])
+                    status = ""
+                
+                # Always allow assignment - tasks can be assigned to multiple users
+                keyboard.append([InlineKeyboardButton(
+                    f"{difficulty} {t['name'][:20]}{'...' if len(t['name']) > 20 else ''} ({t['points']}pt) {status}", 
+                    callback_data=f"assign_{t['id']}"
+                )])
             
             keyboard.append([InlineKeyboardButton("🔙 Tutte le Categorie", callback_data="tasks_menu")])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -675,14 +729,13 @@ class FamilyTaskBot:
             chat_id = query.message.chat.id
             total_tasks = len(self.get_db().get_all_tasks())
             assigned_tasks = len(self.get_db().get_assigned_tasks_for_chat(chat_id))
-            available_tasks = total_tasks - assigned_tasks
             
             text = (
                 "📋 **Scegli una categoria di task:**\n\n"
                 f"📊 **Stato attuale:**\n"
                 f"• 📦 Task totali: {total_tasks}\n"
-                f"• ✅ Task assegnate: {assigned_tasks}\n"
-                f"• 🆓 Task disponibili: {available_tasks}\n\n"
+                f"• ✅ Assegnazioni totali: {assigned_tasks}\n"
+                f"• 🆓 Tutte le task sono sempre disponibili per nuove assegnazioni\n\n"
                 "👇 Seleziona una categoria per vedere le task disponibili:"
             )
             
@@ -691,7 +744,6 @@ class FamilyTaskBot:
                 # Count tasks in this category (same logic as show_tasks)
                 tasks = self.get_db().get_all_tasks()
                 assigned = self.get_db().get_assigned_tasks_for_chat(chat_id)
-                assigned_task_ids = set(a['task_id'] for a in assigned)
                 
                 if cat.lower() == "altro":
                     cat_tasks = [t for t in tasks if self._is_uncategorized_task(t['name'].lower())]
@@ -706,13 +758,15 @@ class FamilyTaskBot:
                                     cat_tasks.append(task)
                                 break
                 
-                available_in_cat = len([t for t in cat_tasks if t['id'] not in assigned_task_ids])
+                # Count assignments in this category
+                assigned_in_cat = len([a for a in assigned if any(t['id'] == a['task_id'] for t in cat_tasks)])
                 total_in_cat = len(cat_tasks)
                 
-                if available_in_cat > 0:
-                    status = f"({available_in_cat}/{total_in_cat})"
-                elif total_in_cat > 0:
-                    status = "(tutte assegnate)"
+                if total_in_cat > 0:
+                    if assigned_in_cat > 0:
+                        status = f"({assigned_in_cat} assegnaz.)"
+                    else:
+                        status = f"({total_in_cat} disponibili)"
                 else:
                     status = "(vuota)"
                     
