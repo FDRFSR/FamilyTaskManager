@@ -284,3 +284,41 @@ class FamilyTaskDB:
         except Exception as e:
             logger.error(f"Errore in get_assigned_tasks_for_chat: {e}")
             return []
+
+    def get_task_completion_stats(self, chat_id=None):
+        """Get task completion statistics showing how many times each task has been completed"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                if chat_id:
+                    # Get completion stats for a specific chat/family
+                    cur.execute("""
+                        SELECT t.id, t.name, t.points, t.time_minutes, COALESCE(COUNT(ct.id), 0) as completion_count
+                        FROM tasks t
+                        LEFT JOIN completed_tasks ct ON t.id = ct.task_id AND ct.chat_id = %s
+                        GROUP BY t.id, t.name, t.points, t.time_minutes
+                        ORDER BY completion_count DESC, t.name;
+                    """, (chat_id,))
+                else:
+                    # Get global completion stats across all chats
+                    cur.execute("""
+                        SELECT t.id, t.name, t.points, t.time_minutes, COALESCE(COUNT(ct.id), 0) as completion_count
+                        FROM tasks t
+                        LEFT JOIN completed_tasks ct ON t.id = ct.task_id
+                        GROUP BY t.id, t.name, t.points, t.time_minutes
+                        ORDER BY completion_count DESC, t.name;
+                    """)
+                rows = cur.fetchall()
+                return [
+                    {
+                        "task_id": row[0],
+                        "name": row[1],
+                        "points": row[2],
+                        "time_minutes": row[3],
+                        "completion_count": row[4]
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Errore in get_task_completion_stats: {e}")
+            return []

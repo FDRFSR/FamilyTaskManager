@@ -6,6 +6,7 @@ Manage your family chores in a modern, robust, and collaborative way directly on
 - **Interactive menu** with emoji and two-level navigation (categories → tasks)
 - **Task assignment and completion** with persistence on PostgreSQL Railway
 - **Leaderboard** and **statistics** always up-to-date
+- **Task completion statistics** showing how many times each task has been completed by the family
 - **Automatic member management** (auto-add on every message)
 - **Completed task history** and re-assignable tasks
 - **Modern UI**: buttons, callbacks, visual feedback
@@ -37,6 +38,7 @@ Manage your family chores in a modern, robust, and collaborative way directly on
 - `/mytasks` — Your assigned tasks
 - `/leaderboard` — Family leaderboard
 - `/stats` — Your statistics
+- `/taskstats` — Family task completion statistics
 - `/help` — Help and info
 
 ## 🗄️ Database Structure

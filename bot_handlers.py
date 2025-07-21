@@ -104,6 +104,7 @@ class FamilyTaskBot:
             "• `/mytasks` - Le tue task assegnate\n"
             "• `/leaderboard` - Classifica famiglia\n"
             "• `/stats` - Le tue statistiche\n"
+            "• `/taskstats` - Statistiche completamenti task famiglia\n"
             "• `/help` - Questa guida\n\n"
             "🎮 **Come funziona:**\n"
             "1️⃣ Scegli una categoria di task\n"
@@ -114,6 +115,9 @@ class FamilyTaskBot:
             "• Ogni task ha un valore in punti\n"
             "• 50 punti = 1 livello in più\n"
             "• Le task completate vanno in archivio\n\n"
+            "📊 **Statistiche:**\n"
+            "• `/stats` mostra i tuoi progressi personali\n"
+            "• `/taskstats` mostra quante volte ogni task è stata completata dalla famiglia\n\n"
             "💡 **Suggerimento:** Usa i bottoni del menu per una navigazione più rapida!"
         )
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
@@ -217,7 +221,108 @@ class FamilyTaskBot:
             f"🎯 {progress}/50 punti • {needed} punti al livello {stats['level'] + 1}\n\n"
             f"💡 **Media punti per task:** {stats['total_points'] // max(stats['tasks_completed'], 1)}"
         )
-        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
+        
+        # Add button to view task completion statistics
+        keyboard = [
+            [InlineKeyboardButton("📋 Statistiche Task Famiglia", callback_data="family_task_stats")],
+            [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
+    async def family_task_stats(self, update, context):
+        """Show task completion statistics for the family/chat"""
+        chat_id = update.effective_chat.id
+        task_stats = self.get_db().get_task_completion_stats(chat_id)
+        
+        if not task_stats:
+            text = (
+                "📋 **Statistiche Task Famiglia**\n\n"
+                "🚫 Nessuna task completata ancora!\n\n"
+                "💡 **Per iniziare:**\n"
+                "1️⃣ Assegna task ai membri famiglia\n"
+                "2️⃣ Completa le task per vedere le statistiche\n\n"
+                "🏆 I dati appariranno qui dopo i primi completamenti!"
+            )
+            keyboard = [
+                [InlineKeyboardButton("🔙 Torna alle Statistiche", callback_data="show_stats")],
+                [InlineKeyboardButton("📋 Tutte le Task", callback_data="tasks_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            if update.message:
+                await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            else:
+                await update.callback_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+            return
+        
+        # Calculate summary statistics
+        total_completions = sum(task['completion_count'] for task in task_stats)
+        completed_tasks = [task for task in task_stats if task['completion_count'] > 0]
+        most_popular = completed_tasks[:5] if completed_tasks else []
+        
+        text = (
+            "📋 **Statistiche Task Famiglia**\n\n"
+            f"📊 **Riepilogo generale:**\n"
+            f"• 🎯 Task completate totali: {total_completions}\n"
+            f"• 📦 Task diverse completate: {len(completed_tasks)}\n"
+            f"• 💪 Task mai completate: {len(task_stats) - len(completed_tasks)}\n\n"
+        )
+        
+        if most_popular:
+            text += "🏆 **Top 5 Task più completate:**\n"
+            for i, task in enumerate(most_popular, 1):
+                # Add medal emoji for top 3
+                if i == 1:
+                    medal = "🥇"
+                elif i == 2:
+                    medal = "🥈"
+                elif i == 3:
+                    medal = "🥉"
+                else:
+                    medal = f"{i}."
+                
+                # Add difficulty indicator
+                if task['time_minutes'] <= 10:
+                    difficulty = "🟢"
+                elif task['time_minutes'] <= 25:
+                    difficulty = "🟡"
+                else:
+                    difficulty = "🔴"
+                
+                text += (
+                    f"{medal} {difficulty} **{task['name']}**\n"
+                    f"   ✅ Completata {task['completion_count']} volte\n"
+                    f"   ⭐ {task['points']} pt • ⏱️ ~{task['time_minutes']} min\n\n"
+                )
+        else:
+            text += "💡 Nessuna task completata ancora. Iniziate a completare task per vedere le statistiche!\n\n"
+        
+        # Show some interesting insights
+        if completed_tasks:
+            avg_completions = total_completions / len(completed_tasks)
+            most_completed_task = max(completed_tasks, key=lambda x: x['completion_count'])
+            text += (
+                f"📈 **Insights:**\n"
+                f"• 📊 Media completamenti per task: {avg_completions:.1f}\n"
+                f"• 🌟 Task più popolare: {most_completed_task['name']} ({most_completed_task['completion_count']} volte)\n"
+            )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔙 Torna alle Statistiche", callback_data="show_stats")],
+            [InlineKeyboardButton("📋 Tutte le Task", callback_data="tasks_menu")],
+            [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.message:
+            await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        else:
+            await update.callback_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
+    async def task_stats_command(self, update, context):
+        """Command handler for /taskstats to show family task completion statistics"""
+        await self.family_task_stats(update, context)
 
     async def show_tasks(self, update, context):
         chat_id = update.effective_chat.id
@@ -633,6 +738,15 @@ class FamilyTaskBot:
                     self.effective_chat = chat
                     self.message = query.message
             await self.leaderboard(DummyUpdate(query.from_user, query.message.chat), None)
+        elif data == "family_task_stats":
+            # Create a dummy update object for family task stats
+            class DummyUpdate:
+                def __init__(self, user, chat):
+                    self.effective_user = user
+                    self.effective_chat = chat
+                    self.message = query.message
+                    self.callback_query = query
+            await self.family_task_stats(DummyUpdate(query.from_user, query.message.chat), None)
         elif data.startswith("cat_"):
             cat = data.replace("cat_", "")
             tasks = self.get_db().get_all_tasks()
@@ -798,6 +912,8 @@ class FamilyTaskBot:
             await self.leaderboard(update, context)
         elif text in ["/stats", "stats", "📊 stat", "📊 statistiche"]:
             await self.stats(update, context)
+        elif text in ["/taskstats", "taskstats", "statistiche task", "task stats"]:
+            await self.family_task_stats(update, context)
         elif text in ["/help", "help", "❓ help", "❓ aiuto"]:
             await self.help_command(update, context)
         elif text in ["⚙️ gestione"]:
