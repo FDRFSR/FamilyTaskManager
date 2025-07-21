@@ -122,7 +122,20 @@ class FamilyTaskDB:
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
-                # Bypass: consenti assegnazione multipla
+                # Check if already assigned to prevent duplicate
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM assigned_tasks 
+                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
+                    """,
+                    (chat_id, task_id, assigned_to)
+                )
+                count = cur.fetchone()[0]
+                
+                if count > 0:
+                    raise ValueError(f"Task già assegnata a questo utente")
+                
+                # Allow multiple assignments to different users
                 cur.execute(
                     """
                     INSERT INTO assigned_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, status)
