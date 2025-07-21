@@ -169,6 +169,8 @@ class FamilyTaskBot:
     async def stats(self, update, context):
         user = update.effective_user
         stats = self.get_db().get_user_stats(user.id)
+        task_completion_stats = self.get_db().get_user_task_completion_stats(user.id)
+        
         if not stats:
             text = (
                 f"📊 **Statistiche di {user.first_name}**\n\n"
@@ -217,6 +219,14 @@ class FamilyTaskBot:
             f"🎯 {progress}/50 punti • {needed} punti al livello {stats['level'] + 1}\n\n"
             f"💡 **Media punti per task:** {stats['total_points'] // max(stats['tasks_completed'], 1)}"
         )
+        
+        # Add individual task completion statistics
+        if task_completion_stats:
+            text += "\n\n🎯 **Task completate per tipo:**\n"
+            for task_stat in task_completion_stats:
+                count_text = "volta" if task_stat['completion_count'] == 1 else "volte"
+                text += f"• **{task_stat['task_name']}**: completata {task_stat['completion_count']} {count_text}\n"
+        
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
     async def show_tasks(self, update, context):
