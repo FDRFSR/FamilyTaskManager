@@ -230,6 +230,28 @@ class FamilyTaskDB:
             logger.error(f"Errore in get_user_stats: {e}")
             return None
 
+    def get_user_task_completion_stats(self, user_id):
+        """Get individual task completion statistics for a user"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT t.name, COUNT(*) as completion_count
+                    FROM completed_tasks ct
+                    JOIN tasks t ON ct.task_id = t.id
+                    WHERE ct.assigned_to = %s
+                    GROUP BY ct.task_id, t.name
+                    ORDER BY completion_count DESC, t.name ASC;
+                """, (user_id,))
+                rows = cur.fetchall()
+                return [
+                    {"task_name": row[0], "completion_count": row[1]}
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Errore in get_user_task_completion_stats: {e}")
+            return []
+
     def get_leaderboard(self, chat_id):
         try:
             members = self.get_family_members(chat_id)
