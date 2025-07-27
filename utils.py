@@ -1,6 +1,20 @@
 import logging
 from collections import defaultdict
 
+# Enhanced logging configuration
+def setup_enhanced_logging():
+    """Configure enhanced logging for better debugging"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Set specific log levels for different components
+    logging.getLogger('telegram').setLevel(logging.WARNING)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # More efficient message tracking with chat-specific lists
