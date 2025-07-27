@@ -469,6 +469,11 @@ class FamilyTaskDB:
             logger.error(f"Errore in get_user_stats: {e}")
             return None
 
+    def get_user_badges(self, user_id):
+        """Get user badges - stub implementation for compatibility"""
+        # This is a stub implementation for tests - badges are not implemented yet
+        return []
+
     def get_user_task_completion_stats(self, user_id):
         """Get individual task completion statistics for a user"""
         try:
