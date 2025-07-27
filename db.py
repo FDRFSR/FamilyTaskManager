@@ -96,6 +96,7 @@ class FamilyTaskDB:
         ]
 
     def add_family_member(self, chat_id, user_id, username, first_name):
+        """Add a family member with improved error handling and logging"""
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -107,8 +108,12 @@ class FamilyTaskDB:
                     ON CONFLICT (chat_id, user_id) DO NOTHING;
                 """, (chat_id, user_id, username, first_name))
                 conn.commit()
+                logger.debug(f"Successfully added/updated member {user_id} ({first_name}) in chat {chat_id}")
+        except psycopg2.Error as e:
+            logger.error(f"Database error in add_family_member for user {user_id} ({first_name}) in chat {chat_id}: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Errore in add_family_member: {e}")
+            logger.error(f"Unexpected error in add_family_member for user {user_id} ({first_name}) in chat {chat_id}: {e}")
             raise
 
     def get_all_tasks(self):
@@ -144,8 +149,15 @@ class FamilyTaskDB:
                     (chat_id, task_id, assigned_to, assigned_by)
                 )
                 conn.commit()
+        except ValueError as e:
+            # This is expected for duplicate assignments
+            logger.info(f"Assignment validation failed for task {task_id} to user {assigned_to}: {e}")
+            raise
+        except psycopg2.Error as e:
+            logger.error(f"Database error in assign_task (task: {task_id}, user: {assigned_to}, chat: {chat_id}): {e}")
+            raise
         except Exception as e:
-            logger.error(f"Errore in assign_task: {e}")
+            logger.error(f"Unexpected error in assign_task (task: {task_id}, user: {assigned_to}, chat: {chat_id}): {e}")
             raise
 
     def get_user_assigned_tasks(self, chat_id, user_id):
@@ -168,29 +180,60 @@ class FamilyTaskDB:
             return []
 
     def complete_task(self, chat_id, task_id, user_id):
+        """Complete a task with improved validation and error handling"""
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
-                # Aggiorna lo stato a 'completed'
+                
+                # First, check if the task assignment exists and is in 'assigned' status
                 cur.execute("""
-                    UPDATE assigned_tasks SET status = 'completed' WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
+                    SELECT COUNT(*) FROM assigned_tasks 
+                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
                 """, (chat_id, task_id, user_id))
-                # Sposta la riga in completed_tasks per storico
+                count = cur.fetchone()[0]
+                
+                if count == 0:
+                    logger.warning(f"Attempted to complete non-assigned task: chat_id={chat_id}, task_id={task_id}, user_id={user_id}")
+                    return False
+                
+                # Verify the task exists in the tasks table
+                cur.execute("SELECT points FROM tasks WHERE id = %s;", (task_id,))
+                task_result = cur.fetchone()
+                if not task_result:
+                    logger.error(f"Task {task_id} not found in tasks table")
+                    return False
+                
+                points = task_result[0]
+                
+                # Update status to 'completed'
+                cur.execute("""
+                    UPDATE assigned_tasks SET status = 'completed' 
+                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'assigned';
+                """, (chat_id, task_id, user_id))
+                
+                # Insert into completed_tasks for history
                 cur.execute("""
                     INSERT INTO completed_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, completed_date, points_earned)
-                    SELECT chat_id, task_id, assigned_to, assigned_by, assigned_date, NOW(),
-                           (SELECT points FROM tasks WHERE id = assigned_tasks.task_id)
+                    SELECT chat_id, task_id, assigned_to, assigned_by, assigned_date, NOW(), %s
                     FROM assigned_tasks
                     WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
-                """, (chat_id, task_id, user_id))
-                # Elimina la riga da assigned_tasks (così può essere riassegnata)
+                """, (points, chat_id, task_id, user_id))
+                
+                # Remove from assigned_tasks (so it can be reassigned)
                 cur.execute("""
-                    DELETE FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
+                    DELETE FROM assigned_tasks 
+                    WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
                 """, (chat_id, task_id, user_id))
+                
                 conn.commit()
+                logger.info(f"Task {task_id} completed by user {user_id} in chat {chat_id} (+{points} points)")
                 return True
+                
+        except psycopg2.Error as e:
+            logger.error(f"Database error in complete_task (chat_id={chat_id}, task_id={task_id}, user_id={user_id}): {e}")
+            return False
         except Exception as e:
-            logger.error(f"Errore in complete_task: {e}")
+            logger.error(f"Unexpected error in complete_task (chat_id={chat_id}, task_id={task_id}, user_id={user_id}): {e}")
             return False
 
     def get_family_members(self, chat_id):

@@ -5,9 +5,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import asyncio
 from bot_handlers import FamilyTaskBot
 from db import FamilyTaskDB
-from utils import delete_old_messages
+from utils import delete_old_messages, setup_enhanced_logging
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Setup enhanced logging
+setup_enhanced_logging()
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":

@@ -59,29 +59,46 @@ class FamilyTaskBot:
         try:
             self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
-            logger.error(f"Errore add_family_member: {e}")
+            logger.error(f"Errore add_family_member per user {user.id} in chat {chat_id}: {e}")
+            # Continue execution even if adding member fails
         
         # Get user stats to personalize welcome message
         stats = self.get_db().get_user_stats(user.id)
         
         if stats and stats['tasks_completed'] > 0:
+            # Determine achievement level for personalized welcome
+            if stats['tasks_completed'] >= 50:
+                achievement = "🏆 Task Master"
+            elif stats['tasks_completed'] >= 25:
+                achievement = "🌟 Task Expert"
+            elif stats['tasks_completed'] >= 10:
+                achievement = "⭐ Task Warrior"
+            else:
+                achievement = "🏃 Task Runner"
+                
             text = (
                 f"🎉 Bentornato, {user.first_name}!\n\n"
-                f"📊 Il tuo progresso:\n"
-                f"⭐ {stats['total_points']} punti • 🏅 Livello {stats['level']}\n"
+                f"🏅 **{achievement}**\n\n"
+                f"📊 **Il tuo progresso:**\n"
+                f"⭐ {stats['total_points']} punti • 🔥 Livello {stats['level']}\n"
                 f"✅ {stats['tasks_completed']} task completate\n\n"
-                "🏠 Gestisci le attività della tua famiglia con il menu qui sotto:"
+                f"🚀 **Continua la tua serie vincente!**\n"
+                f"Ogni task completata ti avvicina al prossimo livello.\n\n"
+                "👇 Usa il menu qui sotto per gestire le tue attività:"
             )
         else:
             text = (
                 f"👋 Benvenuto, {user.first_name}!\n\n"
-                "🏠 **Family Task Manager** ti aiuta a organizzare le attività domestiche in famiglia!\n\n"
-                "🌟 **Funzionalità principali:**\n"
-                "• 📋 Assegna e completa task\n"
-                "• 🏆 Guadagna punti e livelli\n"
-                "• 📊 Visualizza statistiche\n"
-                "• 👥 Compete con la famiglia\n\n"
-                "💡 Inizia esplorando le task disponibili!"
+                "🏠 **Family Task Manager** - il modo moderno di organizzare le attività domestiche!\n\n"
+                "🌟 **Cosa puoi fare:**\n"
+                "• 📋 Visualizza e assegnati task domestiche\n"
+                "• ⭐ Guadagna punti completando le attività\n"
+                "• 🏆 Compete con la famiglia nella classifica\n"
+                "• 📊 Monitora i tuoi progressi e statistiche\n"
+                "• 🎯 Sblocca nuovi livelli e achievement\n\n"
+                "🚀 **Pronto per iniziare?**\n"
+                "Tocca '📋 Tutte le Task' per vedere cosa c'è da fare!\n\n"
+                "💡 *Suggerimento: Inizia con task semplici per guadagnare i primi punti*"
             )
         
         keyboard = [
@@ -99,22 +116,28 @@ class FamilyTaskBot:
         text = (
             "📚 **Guida Family Task Manager**\n\n"
             "🎯 **Comandi principali:**\n"
-            "• `/start` - Menu principale\n"
-            "• `/tasks` - Elenco task per categoria\n"
-            "• `/mytasks` - Le tue task assegnate\n"
-            "• `/leaderboard` - Classifica famiglia\n"
-            "• `/stats` - Le tue statistiche\n"
-            "• `/help` - Questa guida\n\n"
-            "🎮 **Come funziona:**\n"
-            "1️⃣ Scegli una categoria di task\n"
-            "2️⃣ Assegna task ai membri famiglia\n"
-            "3️⃣ Completa le task per guadagnare punti\n"
-            "4️⃣ Scala la classifica e aumenta il tuo livello!\n\n"
-            "🏆 **Sistema punti:**\n"
-            "• Ogni task ha un valore in punti\n"
-            "• 50 punti = 1 livello in più\n"
-            "• Le task completate vanno in archivio\n\n"
-            "💡 **Suggerimento:** Usa i bottoni del menu per una navigazione più rapida!"
+            "• `/start` - Menu principale e benvenuto\n"
+            "• `/tasks` - Visualizza task per categoria\n"
+            "• `/mytasks` - Le tue task personali\n"
+            "• `/leaderboard` - Classifica della famiglia\n"
+            "• `/stats` - Le tue statistiche dettagliate\n"
+            "• `/help` - Mostra questa guida\n\n"
+            "🎮 **Come iniziare (passo dopo passo):**\n"
+            "1️⃣ **Esplora:** Tocca '📋 Tutte le Task'\n"
+            "2️⃣ **Scegli:** Seleziona una categoria interessante\n"
+            "3️⃣ **Assegna:** Prendi una task o assegnala ad altri\n"
+            "4️⃣ **Completa:** Segna la task come completata\n"
+            "5️⃣ **Celebra:** Guadagna punti e scala la classifica!\n\n"
+            "🏆 **Sistema di progressione:**\n"
+            "• 🎯 Task diverse = punti diversi (3-18 punti)\n"
+            "• ⬆️ 50 punti = salita di livello\n"
+            "• 🏅 Achievement speciali sbloccabili\n"
+            "• 📊 Statistiche dettagliate sempre aggiornate\n\n"
+            "🔥 **Pro Tips:**\n"
+            "• Inizia con task da pochi punti per \"riscaldarti\"\n"
+            "• Le task completate tornano subito disponibili\n"
+            "• Controlla '📊 Statistiche' per vedere i tuoi progressi\n\n"
+            "❓ **Serve aiuto?** Usa i bottoni del menu - sono più veloci! 🚀"
         )
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
@@ -123,14 +146,19 @@ class FamilyTaskBot:
         leaderboard = self.get_db().get_leaderboard(chat_id)
         if not leaderboard:
             text = (
-                "📊 **Classifica Famiglia**\n\n"
-                "🚫 Nessuna attività completata ancora!\n\n"
-                "💡 **Per iniziare:**\n"
-                "1️⃣ Vai su 📋 Tutte le Task\n"
-                "2️⃣ Scegli una categoria\n"
-                "3️⃣ Assegna una task a te stesso o ad altri\n"
-                "4️⃣ Completa la task per apparire in classifica!\n\n"
-                "🏆 La competizione ti aspetta!"
+                "🏆 **Classifica Famiglia**\n\n"
+                "🌟 **La competizione non è ancora iniziata!**\n\n"
+                "🚀 **Come entrare in classifica:**\n"
+                "1️⃣ Vai su '📋 Tutte le Task'\n"
+                "2️⃣ Scegli una categoria interessante\n"
+                "3️⃣ Assegnati una task facile per iniziare\n"
+                "4️⃣ Completala per guadagnare i primi punti\n"
+                "5️⃣ Apparirà il tuo nome in classifica! 🎉\n\n"
+                "💡 **Task consigliate per iniziare:**\n"
+                "• 🏠 Fare i letti (4 pt)\n"
+                "• 🍽️ Preparare la tavola (4 pt)\n"
+                "• 🌱 Innaffiare le piante (3 pt)\n\n"
+                "🎯 **Chi farà il primo passo e aprirà la competizione?**"
             )
             await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
             return
@@ -243,24 +271,15 @@ class FamilyTaskBot:
             "👇 Seleziona una categoria per vedere le task disponibili:"
         )
         
+        # Get data once for efficiency
+        tasks = self.get_db().get_all_tasks()
+        assigned = self.get_db().get_assigned_tasks_for_chat(chat_id)
+        categorized_tasks = self._categorize_tasks_efficiently(tasks)
+        
         keyboard = []
         for cat, emoji, description in self.CATEGORIES:
-            # Count tasks in this category
-            tasks = self.get_db().get_all_tasks()
-            assigned = self.get_db().get_assigned_tasks_for_chat(chat_id)
-            
-            if cat.lower() == "altro":
-                cat_tasks = [t for t in tasks if self._is_uncategorized_task(t['name'].lower())]
-            else:
-                cat_tasks = []
-                for task in tasks:
-                    task_name_lower = task['name'].lower()
-                    priority_categories = ["animali", "cucina", "spesa", "pulizie", "bucato", "giardino", "auto", "casa"]
-                    for pcat in priority_categories:
-                        if pcat in self.CATEGORY_MAP and self.CATEGORY_MAP[pcat](task_name_lower):
-                            if pcat == cat.lower():
-                                cat_tasks.append(task)
-                            break
+            cat_key = cat.lower()
+            cat_tasks = categorized_tasks.get(cat_key, [])
             
             # Count assignments in this category
             assigned_in_cat = len([a for a in assigned if any(t['id'] == a['task_id'] for t in cat_tasks)])
@@ -281,6 +300,30 @@ class FamilyTaskBot:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        
+    def _categorize_tasks_efficiently(self, tasks):
+        """Categorize all tasks at once to avoid repeated processing"""
+        categorized = {cat[0].lower(): [] for cat, _, _ in self.CATEGORIES}
+        
+        priority_categories = ["animali", "cucina", "spesa", "pulizie", "bucato", "giardino", "auto", "casa"]
+        
+        for task in tasks:
+            task_name_lower = task['name'].lower()
+            assigned_category = None
+            
+            # Check priority categories first
+            for pcat in priority_categories:
+                if pcat in self.CATEGORY_MAP and self.CATEGORY_MAP[pcat](task_name_lower):
+                    assigned_category = pcat
+                    break
+            
+            # If no category matched, it goes to "altro"
+            if assigned_category:
+                categorized[assigned_category].append(task)
+            else:
+                categorized["altro"].append(task)
+                
+        return categorized
 
     async def my_tasks(self, update, context):
         user = update.effective_user
@@ -290,12 +333,17 @@ class FamilyTaskBot:
         if not tasks:
             text = (
                 "📝 **Le tue task assegnate**\n\n"
-                "🤷‍♂️ Non hai task assegnate al momento!\n\n"
-                "💡 **Per iniziare:**\n"
-                "• Vai su 📋 Tutte le Task\n"
-                "• Scegli una categoria\n"
-                "• Assegnati una task\n\n"
-                "🎯 Le task completate ti faranno guadagnare punti!"
+                "🤷‍♂️ **Non hai task assegnate al momento!**\n\n"
+                "🚀 **Inizia subito:**\n"
+                "1️⃣ Tocca '📋 Tutte le Task' nel menu\n"
+                "2️⃣ Scegli una categoria che ti piace\n"
+                "3️⃣ Seleziona una task interessante\n"
+                "4️⃣ Assegnala a te stesso con '🫵 Assegna a me'\n\n"
+                "💡 **Suggerimenti per iniziare:**\n"
+                "• 🟢 Prova task facili da 3-5 punti\n"
+                "• 🏠 'Casa' e 'Pulizie' hanno molte opzioni\n"
+                "• ⚡ Task veloci: 'Fare i letti', 'Preparare tavola'\n\n"
+                "🎯 **Ogni task completata = punti + progresso nella classifica!**"
             )
             await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
             return
@@ -524,7 +572,12 @@ class FamilyTaskBot:
                         f"ℹ️ **Task già assegnata**\n\n"
                         f"📋 **{task['name']}**\n"
                         f"👤 È già assegnata a {assignee_name}\n\n"
-                        f"💡 Ogni persona può avere la stessa task assegnata una sola volta, ma task diverse possono essere assegnate alla stessa persona.",
+                        f"💡 **Perché non posso assegnarla di nuovo?**\n"
+                        f"Ogni persona può avere la stessa task assegnata una sola volta per evitare duplicati.\n\n"
+                        f"✅ **Cosa posso fare?**\n"
+                        f"• Scegliere un'altra persona per questa task\n"
+                        f"• Assegnarmi una task diversa\n"
+                        f"• Aspettare che {assignee_name} completi la task",
                         parse_mode=ParseMode.MARKDOWN,
                         reply_markup=reply_markup
                     )
@@ -552,10 +605,41 @@ class FamilyTaskBot:
             user_id = query.from_user.id
             chat_id = query.message.chat.id
             
+            # Validate task_id format
+            if not task_id or len(task_id.strip()) == 0:
+                await query.edit_message_text(
+                    "❌ **Errore nei parametri**\n\nID task non valido. Torna alle tue task e riprova.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
             # Get task details before completion
             task = self.get_db().get_task_by_id(task_id)
             if not task:
-                await query.edit_message_text("❌ Task non trovata!")
+                await query.edit_message_text(
+                    "❌ **Task Non Trovata**\n\n"
+                    "La task richiesta non esiste più.\n\n"
+                    "💡 **Possibili motivi:**\n"
+                    "• Task rimossa dal sistema\n"
+                    "• Errore temporaneo del database\n\n"
+                    "🔄 Torna alle tue task per vedere quelle disponibili.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+                
+            # Check if task is actually assigned to user
+            user_tasks = self.get_db().get_user_assigned_tasks(chat_id, user_id)
+            if not any(t['task_id'] == task_id for t in user_tasks):
+                await query.edit_message_text(
+                    "❌ **Task Non Assegnata**\n\n"
+                    "Questa task non ti è attualmente assegnata.\n\n"
+                    "💡 **Possibili motivi:**\n"
+                    "• Task già completata\n"
+                    "• Task riassegnata ad altri\n"
+                    "• Sincronizzazione in corso\n\n"
+                    "🔄 Controlla le tue task attuali.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
                 return
                 
             try:
@@ -567,17 +651,27 @@ class FamilyTaskBot:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 text = (
-                    f"🎯 **Conferma completamento**\n\n"
+                    f"🎯 **Conferma Completamento**\n\n"
                     f"📋 **Task:** {task['name']}\n"
-                    f"⭐ **Punti da guadagnare:** {task['points']}\n"
-                    f"⏱️ **Tempo stimato:** ~{task['time_minutes']} minuti\n\n"
-                    "🤔 Sei sicuro di aver completato questa task?"
+                    f"⭐ **Punti da guadagnare:** +{task['points']}\n"
+                    f"⏱️ **Tempo stimato originale:** ~{task['time_minutes']} minuti\n\n"
+                    f"✨ **Dopo il completamento:**\n"
+                    f"• Guadagnerai {task['points']} punti\n"
+                    f"• La task sarà archiviata\n"
+                    f"• Sarà subito disponibile per nuove assegnazioni\n\n"
+                    "🤔 **Sei sicuro di aver completato questa task?**"
                 )
                 
                 await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
                 
             except Exception as exc:
-                await query.edit_message_text(f"❌ Errore nel caricamento task: {exc}")
+                logger.error(f"Error preparing task completion confirmation for task {task_id}: {exc}")
+                await query.edit_message_text(
+                    f"❌ **Errore di Sistema**\n\n"
+                    f"Impossibile preparare la conferma di completamento.\n\n"
+                    f"🔄 Riprova o torna al menu principale.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
         
         elif data.startswith("confirm_complete_"):
             task_id = data.replace("confirm_complete_", "")
@@ -615,7 +709,9 @@ class FamilyTaskBot:
                         f"⭐ **Punti guadagnati:** +{task['points']}\n"
                         f"📊 **Punti totali:** {user_stats['total_points'] if user_stats else task['points']}\n"
                         f"🏅 **Livello attuale:** {new_level}{level_msg}\n\n"
-                        f"👏 Ottimo lavoro! La task è stata archiviata e può essere riassegnata."
+                        f"🎯 **Ottimo lavoro!** La task è stata completata e archiviata.\n"
+                        f"✨ Ora è disponibile per nuove assegnazioni.\n\n"
+                        f"💪 Continua così per guadagnare più punti e salire di livello!"
                     )
                     
                     await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
@@ -791,51 +887,104 @@ class FamilyTaskBot:
             await query.answer("Funzione non ancora implementata.")
 
     async def handle_message(self, update, context):
+        """Handle text messages with improved input validation and error handling"""
         user = update.effective_user
         chat_id = update.effective_chat.id
+        
+        # Validate user and message
+        if not user or not update.message or not update.message.text:
+            logger.warning(f"Invalid message received: user={user}, message={update.message}")
+            return
+            
         try:
             self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
-            logger.error(f"Errore auto-add membro su messaggio: {e}")
-        text = update.message.text.lower()
+            logger.error(f"Errore auto-add membro {user.id} ({user.first_name}) in chat {chat_id}: {e}")
+            # Continue execution - member might already exist
+            
+        # Clean and normalize the input text
+        text = update.message.text.strip().lower()
         
-        # Enhanced message handling with new keyboard layout
-        if text in ["/tasks", "tasks", "📋 tasks", "📋 tutte le task"]:
-            await self.show_tasks(update, context)
-        elif text in ["/mytasks", "mytasks", "📝 mytasks", "📝 le mie task"]:
-            await self.my_tasks(update, context)
-        elif text in ["/leaderboard", "leaderboard", "🏆 leaderboard", "🏆 classifica"]:
-            await self.leaderboard(update, context)
-        elif text in ["/stats", "stats", "📊 stat", "📊 statistiche"]:
-            await self.stats(update, context)
-        elif text in ["/help", "help", "❓ help", "❓ aiuto"]:
-            await self.help_command(update, context)
-        elif text in ["⚙️ gestione"]:
-            # Management menu for future features
+        # Validate text length to prevent abuse
+        if len(text) > 200:
             await send_and_track_message(
                 update.message.reply_text,
-                "⚙️ **Menu Gestione**\n\nFunzionalità in arrivo:\n• Impostazioni famiglia\n• Task personalizzate\n• Notifiche\n\nUsa il menu principale per le funzioni disponibili.",
+                "🤖 **Messaggio troppo lungo**\n\nUsa i comandi del menu per navigare più facilmente!",
                 parse_mode=ParseMode.MARKDOWN
             )
-        elif "assegna" in text:
-            await self.show_tasks(update, context)  # Changed to show categories first
-        elif "task" in text:
-            await self.show_tasks(update, context)
-        elif "classifica" in text or "leaderboard" in text:
-            await self.leaderboard(update, context)
-        elif "stat" in text:
-            await self.stats(update, context)
-        else:
-            # Friendly response for unrecognized messages
-            keyboard = [
-                ["📋 Tutte le Task", "📝 Le Mie Task"],
-                ["🏆 Classifica", "📊 Statistiche"]
-            ]
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            return
+        
+        try:
+            # Enhanced message handling with new keyboard layout
+            if text in ["/tasks", "tasks", "📋 tasks", "📋 tutte le task"]:
+                await self.show_tasks(update, context)
+            elif text in ["/mytasks", "mytasks", "📝 mytasks", "📝 le mie task"]:
+                await self.my_tasks(update, context)
+            elif text in ["/leaderboard", "leaderboard", "🏆 leaderboard", "🏆 classifica"]:
+                await self.leaderboard(update, context)
+            elif text in ["/stats", "stats", "📊 stat", "📊 statistiche"]:
+                await self.stats(update, context)
+            elif text in ["/help", "help", "❓ help", "❓ aiuto"]:
+                await self.help_command(update, context)
+            elif text in ["⚙️ gestione"]:
+                # Management menu for future features
+                await send_and_track_message(
+                    update.message.reply_text,
+                    "⚙️ **Menu Gestione**\n\n"
+                    "🔧 **Funzionalità in sviluppo:**\n"
+                    "• Impostazioni famiglia personalizzate\n"
+                    "• Task personalizzate per la tua famiglia\n"
+                    "• Sistema di notifiche avanzato\n"
+                    "• Pianificazione task ricorrenti\n\n"
+                    "💡 **Per ora usa il menu principale per tutte le funzioni disponibili.**\n\n"
+                    "🚀 Stay tuned per gli aggiornamenti!",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif "assegna" in text or "task" in text:
+                await self.show_tasks(update, context)
+            elif "classifica" in text or "leaderboard" in text:
+                await self.leaderboard(update, context)
+            elif "stat" in text:
+                await self.stats(update, context)
+            else:
+                # Friendly response for unrecognized messages with suggestions
+                keyboard = [
+                    ["📋 Tutte le Task", "📝 Le Mie Task"],
+                    ["🏆 Classifica", "📊 Statistiche"]
+                ]
+                reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+                
+                # Provide context-aware suggestions
+                suggestions = []
+                if any(word in text for word in ["help", "aiuto", "come", "cosa"]):
+                    suggestions.append("• Prova `/help` per la guida completa")
+                if any(word in text for word in ["punto", "punti", "livello"]):
+                    suggestions.append("• Usa '📊 Statistiche' per vedere i tuoi progressi")
+                if any(word in text for word in ["famiglia", "membri", "chi"]):
+                    suggestions.append("• Usa '🏆 Classifica' per vedere tutti i membri")
+                
+                suggestion_text = "\n".join(suggestions) if suggestions else "• Usa il menu qui sotto per navigare facilmente"
+                
+                await send_and_track_message(
+                    update.message.reply_text,
+                    f"👋 Ciao {user.first_name}! Non ho capito \"{update.message.text[:50]}{'...' if len(update.message.text) > 50 else ''}\"\n\n"
+                    f"💡 **Suggerimenti:**\n{suggestion_text}\n\n"
+                    f"🚀 **I bottoni del menu sono il modo più veloce per navigare!**",
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        except Exception as e:
+            logger.error(f"Error handling message '{text}' from user {user.id}: {e}")
             await send_and_track_message(
                 update.message.reply_text,
-                f"👋 Ciao {user.first_name}! Non ho capito il messaggio.\n\n💡 Usa il menu qui sotto o i comandi per navigare:",
-                reply_markup=reply_markup
+                "❌ **Errore Temporaneo**\n\n"
+                "Si è verificato un problema nel processare il tuo messaggio.\n\n"
+                "🔄 **Prova a:**\n"
+                "• Usare i bottoni del menu\n"
+                "• Riprovare tra qualche momento\n"
+                "• Usare `/start` per ricaricare il menu\n\n"
+                "📞 Se il problema persiste, contatta l'amministratore.",
+                parse_mode=ParseMode.MARKDOWN
             )
 
     # async def assign_category_menu(self, query, catid):
@@ -898,37 +1047,85 @@ class FamilyTaskBot:
         )
 
     async def handle_assign(self, query, task_id, target_user_id):
-        """Gestisce l'assegnazione effettiva della task"""
+        """Gestisce l'assegnazione effettiva della task con validazione migliorata"""
         chat_id = query.message.chat.id
         assigned_by = query.from_user.id
+        
+        # Validate inputs
+        if not task_id or not str(target_user_id).isdigit():
+            await query.edit_message_text(
+                "❌ **Errore nei parametri**\n\nParametri di assegnazione non validi. Riprova dal menu.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+            
         try:
-            self.get_db().assign_task(chat_id, task_id, target_user_id, assigned_by)
+            # Check if task exists before assignment
+            task = self.get_db().get_task_by_id(task_id)
+            if not task:
+                await query.edit_message_text(
+                    "❌ **Task Non Trovata**\n\nLa task richiesta non esiste. Potrebbe essere stata rimossa.",
+                    parse_mode=ParseMode.MARKDOWN    
+                )
+                return
+                
+            # Check if target user is a family member  
             members = self.get_db().get_family_members(chat_id)
-            target_member = next((m for m in members if m['user_id'] == target_user_id), None)
-            if target_user_id == assigned_by:
+            target_member = next((m for m in members if m['user_id'] == int(target_user_id)), None)
+            if not target_member and int(target_user_id) != assigned_by:
+                await query.edit_message_text(
+                    "❌ **Utente Non Trovato**\n\nL'utente selezionato non è membro di questa famiglia.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            # Proceed with assignment
+            self.get_db().assign_task(chat_id, task_id, int(target_user_id), assigned_by)
+            
+            if int(target_user_id) == assigned_by:
                 target_name = "te stesso"
             else:
                 target_name = target_member['first_name'] if target_member else f"Utente {target_user_id}"
+                
             keyboard = [
                 [InlineKeyboardButton("📋 Le Mie Task", callback_data="show_my_tasks")],
                 [InlineKeyboardButton("🎯 Assegna Altra Task", callback_data="assign_menu")],
                 [InlineKeyboardButton("🔙 Menu Principale", callback_data="main_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            task = self.get_db().get_task_by_id(task_id)
+            
             success_message = (
-                f"✅ *Task Assegnata con Successo!*\n\n"
+                f"✅ **Task Assegnata con Successo!**\n\n"
                 f"📋 **{task['name']}**\n"
                 f"👤 **Assegnata a:** {target_name}\n"
                 f"⭐ **Punti:** {task['points']}\n"
                 f"⏱️ **Tempo stimato:** ~{task['time_minutes']} minuti\n"
-                f"📅 **Scadenza:** 3 giorni\n\n"
-                f"💡 *La task è ora visibile nelle attività dell'utente!*"
+                f"📅 **Disponibile:** immediatamente\n\n"
+                f"💡 **La task è ora visibile nell'elenco personale dell'utente!**\n"
+                f"🔄 **Dopo il completamento, sarà subito riassegnabile.**"
             )
             await query.edit_message_text(
                 success_message,
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=reply_markup
             )
+        except ValueError as exc:
+            if "già assegnata" in str(exc):
+                # Handle duplicate assignment with better error message (already improved above)
+                pass  # This is handled by the existing improved error message
+            else:
+                await query.edit_message_text(
+                    f"❌ **Errore di Validazione**\n\n{exc}\n\n💡 Controlla i dati e riprova.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
         except Exception as exc:
-            await query.edit_message_text(f"❌ Errore nell'assegnazione: {exc}", parse_mode=ParseMode.MARKDOWN)
+            logger.error(f"Unexpected error in handle_assign: task_id={task_id}, target_user_id={target_user_id}, chat_id={chat_id}: {exc}")
+            await query.edit_message_text(
+                f"❌ **Errore Imprevisto**\n\nSi è verificato un errore durante l'assegnazione.\n\n"
+                f"💡 **Cosa fare:**\n"
+                f"• Riprova tra qualche momento\n"
+                f"• Verifica la connessione\n"
+                f"• Contatta l'amministratore se persiste\n\n"
+                f"🔧 **Dettagli tecnici:** {str(exc)[:100]}...",
+                parse_mode=ParseMode.MARKDOWN
+            )
