@@ -59,29 +59,46 @@ class FamilyTaskBot:
         try:
             self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
-            logger.error(f"Errore add_family_member: {e}")
+            logger.error(f"Errore add_family_member per user {user.id} in chat {chat_id}: {e}")
+            # Continue execution even if adding member fails
         
         # Get user stats to personalize welcome message
         stats = self.get_db().get_user_stats(user.id)
         
         if stats and stats['tasks_completed'] > 0:
+            # Determine achievement level for personalized welcome
+            if stats['tasks_completed'] >= 50:
+                achievement = "🏆 Task Master"
+            elif stats['tasks_completed'] >= 25:
+                achievement = "🌟 Task Expert"
+            elif stats['tasks_completed'] >= 10:
+                achievement = "⭐ Task Warrior"
+            else:
+                achievement = "🏃 Task Runner"
+                
             text = (
                 f"🎉 Bentornato, {user.first_name}!\n\n"
-                f"📊 Il tuo progresso:\n"
-                f"⭐ {stats['total_points']} punti • 🏅 Livello {stats['level']}\n"
+                f"🏅 **{achievement}**\n\n"
+                f"📊 **Il tuo progresso:**\n"
+                f"⭐ {stats['total_points']} punti • 🔥 Livello {stats['level']}\n"
                 f"✅ {stats['tasks_completed']} task completate\n\n"
-                "🏠 Gestisci le attività della tua famiglia con il menu qui sotto:"
+                f"🚀 **Continua la tua serie vincente!**\n"
+                f"Ogni task completata ti avvicina al prossimo livello.\n\n"
+                "👇 Usa il menu qui sotto per gestire le tue attività:"
             )
         else:
             text = (
                 f"👋 Benvenuto, {user.first_name}!\n\n"
-                "🏠 **Family Task Manager** ti aiuta a organizzare le attività domestiche in famiglia!\n\n"
-                "🌟 **Funzionalità principali:**\n"
-                "• 📋 Assegna e completa task\n"
-                "• 🏆 Guadagna punti e livelli\n"
-                "• 📊 Visualizza statistiche\n"
-                "• 👥 Compete con la famiglia\n\n"
-                "💡 Inizia esplorando le task disponibili!"
+                "🏠 **Family Task Manager** - il modo moderno di organizzare le attività domestiche!\n\n"
+                "🌟 **Cosa puoi fare:**\n"
+                "• 📋 Visualizza e assegnati task domestiche\n"
+                "• ⭐ Guadagna punti completando le attività\n"
+                "• 🏆 Compete con la famiglia nella classifica\n"
+                "• 📊 Monitora i tuoi progressi e statistiche\n"
+                "• 🎯 Sblocca nuovi livelli e achievement\n\n"
+                "🚀 **Pronto per iniziare?**\n"
+                "Tocca '📋 Tutte le Task' per vedere cosa c'è da fare!\n\n"
+                "💡 *Suggerimento: Inizia con task semplici per guadagnare i primi punti*"
             )
         
         keyboard = [
@@ -99,22 +116,28 @@ class FamilyTaskBot:
         text = (
             "📚 **Guida Family Task Manager**\n\n"
             "🎯 **Comandi principali:**\n"
-            "• `/start` - Menu principale\n"
-            "• `/tasks` - Elenco task per categoria\n"
-            "• `/mytasks` - Le tue task assegnate\n"
-            "• `/leaderboard` - Classifica famiglia\n"
-            "• `/stats` - Le tue statistiche\n"
-            "• `/help` - Questa guida\n\n"
-            "🎮 **Come funziona:**\n"
-            "1️⃣ Scegli una categoria di task\n"
-            "2️⃣ Assegna task ai membri famiglia\n"
-            "3️⃣ Completa le task per guadagnare punti\n"
-            "4️⃣ Scala la classifica e aumenta il tuo livello!\n\n"
-            "🏆 **Sistema punti:**\n"
-            "• Ogni task ha un valore in punti\n"
-            "• 50 punti = 1 livello in più\n"
-            "• Le task completate vanno in archivio\n\n"
-            "💡 **Suggerimento:** Usa i bottoni del menu per una navigazione più rapida!"
+            "• `/start` - Menu principale e benvenuto\n"
+            "• `/tasks` - Visualizza task per categoria\n"
+            "• `/mytasks` - Le tue task personali\n"
+            "• `/leaderboard` - Classifica della famiglia\n"
+            "• `/stats` - Le tue statistiche dettagliate\n"
+            "• `/help` - Mostra questa guida\n\n"
+            "🎮 **Come iniziare (passo dopo passo):**\n"
+            "1️⃣ **Esplora:** Tocca '📋 Tutte le Task'\n"
+            "2️⃣ **Scegli:** Seleziona una categoria interessante\n"
+            "3️⃣ **Assegna:** Prendi una task o assegnala ad altri\n"
+            "4️⃣ **Completa:** Segna la task come completata\n"
+            "5️⃣ **Celebra:** Guadagna punti e scala la classifica!\n\n"
+            "🏆 **Sistema di progressione:**\n"
+            "• 🎯 Task diverse = punti diversi (3-18 punti)\n"
+            "• ⬆️ 50 punti = salita di livello\n"
+            "• 🏅 Achievement speciali sbloccabili\n"
+            "• 📊 Statistiche dettagliate sempre aggiornate\n\n"
+            "🔥 **Pro Tips:**\n"
+            "• Inizia con task da pochi punti per \"riscaldarti\"\n"
+            "• Le task completate tornano subito disponibili\n"
+            "• Controlla '📊 Statistiche' per vedere i tuoi progressi\n\n"
+            "❓ **Serve aiuto?** Usa i bottoni del menu - sono più veloci! 🚀"
         )
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
@@ -123,14 +146,19 @@ class FamilyTaskBot:
         leaderboard = self.get_db().get_leaderboard(chat_id)
         if not leaderboard:
             text = (
-                "📊 **Classifica Famiglia**\n\n"
-                "🚫 Nessuna attività completata ancora!\n\n"
-                "💡 **Per iniziare:**\n"
-                "1️⃣ Vai su 📋 Tutte le Task\n"
-                "2️⃣ Scegli una categoria\n"
-                "3️⃣ Assegna una task a te stesso o ad altri\n"
-                "4️⃣ Completa la task per apparire in classifica!\n\n"
-                "🏆 La competizione ti aspetta!"
+                "🏆 **Classifica Famiglia**\n\n"
+                "🌟 **La competizione non è ancora iniziata!**\n\n"
+                "🚀 **Come entrare in classifica:**\n"
+                "1️⃣ Vai su '📋 Tutte le Task'\n"
+                "2️⃣ Scegli una categoria interessante\n"
+                "3️⃣ Assegnati una task facile per iniziare\n"
+                "4️⃣ Completala per guadagnare i primi punti\n"
+                "5️⃣ Apparirà il tuo nome in classifica! 🎉\n\n"
+                "💡 **Task consigliate per iniziare:**\n"
+                "• 🏠 Fare i letti (4 pt)\n"
+                "• 🍽️ Preparare la tavola (4 pt)\n"
+                "• 🌱 Innaffiare le piante (3 pt)\n\n"
+                "🎯 **Chi farà il primo passo e aprirà la competizione?**"
             )
             await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
             return
@@ -290,12 +318,17 @@ class FamilyTaskBot:
         if not tasks:
             text = (
                 "📝 **Le tue task assegnate**\n\n"
-                "🤷‍♂️ Non hai task assegnate al momento!\n\n"
-                "💡 **Per iniziare:**\n"
-                "• Vai su 📋 Tutte le Task\n"
-                "• Scegli una categoria\n"
-                "• Assegnati una task\n\n"
-                "🎯 Le task completate ti faranno guadagnare punti!"
+                "🤷‍♂️ **Non hai task assegnate al momento!**\n\n"
+                "🚀 **Inizia subito:**\n"
+                "1️⃣ Tocca '📋 Tutte le Task' nel menu\n"
+                "2️⃣ Scegli una categoria che ti piace\n"
+                "3️⃣ Seleziona una task interessante\n"
+                "4️⃣ Assegnala a te stesso con '🫵 Assegna a me'\n\n"
+                "💡 **Suggerimenti per iniziare:**\n"
+                "• 🟢 Prova task facili da 3-5 punti\n"
+                "• 🏠 'Casa' e 'Pulizie' hanno molte opzioni\n"
+                "• ⚡ Task veloci: 'Fare i letti', 'Preparare tavola'\n\n"
+                "🎯 **Ogni task completata = punti + progresso nella classifica!**"
             )
             await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
             return
@@ -524,7 +557,12 @@ class FamilyTaskBot:
                         f"ℹ️ **Task già assegnata**\n\n"
                         f"📋 **{task['name']}**\n"
                         f"👤 È già assegnata a {assignee_name}\n\n"
-                        f"💡 Ogni persona può avere la stessa task assegnata una sola volta, ma task diverse possono essere assegnate alla stessa persona.",
+                        f"💡 **Perché non posso assegnarla di nuovo?**\n"
+                        f"Ogni persona può avere la stessa task assegnata una sola volta per evitare duplicati.\n\n"
+                        f"✅ **Cosa posso fare?**\n"
+                        f"• Scegliere un'altra persona per questa task\n"
+                        f"• Assegnarmi una task diversa\n"
+                        f"• Aspettare che {assignee_name} completi la task",
                         parse_mode=ParseMode.MARKDOWN,
                         reply_markup=reply_markup
                     )
@@ -615,7 +653,9 @@ class FamilyTaskBot:
                         f"⭐ **Punti guadagnati:** +{task['points']}\n"
                         f"📊 **Punti totali:** {user_stats['total_points'] if user_stats else task['points']}\n"
                         f"🏅 **Livello attuale:** {new_level}{level_msg}\n\n"
-                        f"👏 Ottimo lavoro! La task è stata archiviata e può essere riassegnata."
+                        f"🎯 **Ottimo lavoro!** La task è stata completata e archiviata.\n"
+                        f"✨ Ora è disponibile per nuove assegnazioni.\n\n"
+                        f"💪 Continua così per guadagnare più punti e salire di livello!"
                     )
                     
                     await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
@@ -796,7 +836,8 @@ class FamilyTaskBot:
         try:
             self.get_db().add_family_member(chat_id, user.id, user.username, user.first_name)
         except Exception as e:
-            logger.error(f"Errore auto-add membro su messaggio: {e}")
+            logger.error(f"Errore auto-add membro {user.id} ({user.first_name}) in chat {chat_id}: {e}")
+            # Continue execution - member might already exist
         text = update.message.text.lower()
         
         # Enhanced message handling with new keyboard layout

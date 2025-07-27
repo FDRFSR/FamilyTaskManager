@@ -96,6 +96,7 @@ class FamilyTaskDB:
         ]
 
     def add_family_member(self, chat_id, user_id, username, first_name):
+        """Add a family member with improved error handling and logging"""
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -107,8 +108,12 @@ class FamilyTaskDB:
                     ON CONFLICT (chat_id, user_id) DO NOTHING;
                 """, (chat_id, user_id, username, first_name))
                 conn.commit()
+                logger.debug(f"Successfully added/updated member {user_id} ({first_name}) in chat {chat_id}")
+        except psycopg2.Error as e:
+            logger.error(f"Database error in add_family_member for user {user_id} ({first_name}) in chat {chat_id}: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Errore in add_family_member: {e}")
+            logger.error(f"Unexpected error in add_family_member for user {user_id} ({first_name}) in chat {chat_id}: {e}")
             raise
 
     def get_all_tasks(self):
@@ -144,8 +149,15 @@ class FamilyTaskDB:
                     (chat_id, task_id, assigned_to, assigned_by)
                 )
                 conn.commit()
+        except ValueError as e:
+            # This is expected for duplicate assignments
+            logger.info(f"Assignment validation failed for task {task_id} to user {assigned_to}: {e}")
+            raise
+        except psycopg2.Error as e:
+            logger.error(f"Database error in assign_task (task: {task_id}, user: {assigned_to}, chat: {chat_id}): {e}")
+            raise
         except Exception as e:
-            logger.error(f"Errore in assign_task: {e}")
+            logger.error(f"Unexpected error in assign_task (task: {task_id}, user: {assigned_to}, chat: {chat_id}): {e}")
             raise
 
     def get_user_assigned_tasks(self, chat_id, user_id):
