@@ -2,6 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 import logging
+from datetime import datetime
 from db import FamilyTaskDB
 from utils import send_and_track_message
 
@@ -105,15 +106,24 @@ class FamilyTaskBot:
             "• `/leaderboard` - Classifica famiglia\n"
             "• `/stats` - Le tue statistiche\n"
             "• `/help` - Questa guida\n\n"
-            "🎮 **Come funziona:**\n"
+            "🎮 **Come funziona (NUOVO!):**\n"
             "1️⃣ Scegli una categoria di task\n"
-            "2️⃣ Assegna task ai membri famiglia\n"
-            "3️⃣ Completa le task per guadagnare punti\n"
-            "4️⃣ Scala la classifica e aumenta il tuo livello!\n\n"
+            "2️⃣ Seleziona una task\n"
+            "3️⃣ Conferma il completamento immediato\n"
+            "4️⃣ Guadagna punti e scala la classifica!\n\n"
+            "⚡ **Completamento immediato:**\n"
+            "• Selezionando una task viene automaticamente assegnata a te\n"
+            "• La task viene completata subito dopo la conferma\n"
+            "• Nessun passaggio di assegnazione separato\n\n"
             "🏆 **Sistema punti:**\n"
             "• Ogni task ha un valore in punti\n"
             "• 50 punti = 1 livello in più\n"
-            "• Le task completate vanno in archivio\n\n"
+            "• Statistiche mensili per tracciare i progressi\n"
+            "• Le task possono essere completate più volte\n\n"
+            "📊 **Statistiche mensili:**\n"
+            "• I progressi sono tracciati mese per mese\n"
+            "• Visualizza il tuo andamento nel corso dell'anno\n"
+            "• Grafici mensili per una visione completa\n\n"
             "💡 **Suggerimento:** Usa i bottoni del menu per una navigazione più rapida!"
         )
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
@@ -170,6 +180,8 @@ class FamilyTaskBot:
         user = update.effective_user
         stats = self.get_db().get_user_stats(user.id)
         task_completion_stats = self.get_db().get_user_task_completion_stats(user.id)
+        monthly_stats = self.get_db().get_monthly_stats(user.id)
+        current_month_stats = self.get_db().get_current_month_stats(user.id)
         
         if not stats:
             text = (
@@ -197,35 +209,76 @@ class FamilyTaskBot:
         # Performance badge based on tasks completed
         if stats['tasks_completed'] >= 50:
             badge = "🏆 Task Master"
+            badge_emoji = "🏆"
         elif stats['tasks_completed'] >= 25:
             badge = "🌟 Task Expert"
+            badge_emoji = "🌟"
         elif stats['tasks_completed'] >= 10:
             badge = "⭐ Task Warrior"
+            badge_emoji = "⭐"
         elif stats['tasks_completed'] >= 5:
             badge = "🏃 Task Runner"
+            badge_emoji = "🏃"
         else:
             badge = "🌱 Task Beginner"
+            badge_emoji = "🌱"
+        
+        # Current month info
+        current_month_name = [
+            "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+            "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"
+        ][datetime.now().month - 1]
             
         text = (
             f"📊 **Statistiche di {user.first_name}**\n\n"
-            f"🏅 **{badge}**\n\n"
-            f"📈 **I tuoi progressi:**\n"
+            f"🏅 **{badge}** {badge_emoji}\n\n"
+            f"📈 **Progressi totali:**\n"
             f"⭐ **Punti totali:** {stats['total_points']}\n"
             f"✅ **Task completate:** {stats['tasks_completed']}\n"
             f"🏅 **Livello:** {stats['level']}\n"
             f"🔥 **Streak:** {stats['streak']}\n\n"
             f"📊 **Progresso livello:**\n"
-            f"{progress_bar}\n"
+            f"`{progress_bar}`\n"
             f"🎯 {progress}/50 punti • {needed} punti al livello {stats['level'] + 1}\n\n"
-            f"💡 **Media punti per task:** {stats['total_points'] // max(stats['tasks_completed'], 1)}"
+            f"🗓️ **Progresso {current_month_name}:**\n"
+            f"⭐ {current_month_stats['points']} punti questo mese\n"
+            f"✅ {current_month_stats['tasks']} task completate\n"
+            f"📊 Media: {current_month_stats['points'] // max(current_month_stats['tasks'], 1)} pt/task\n\n"
         )
         
-        # Add individual task completion statistics
+        # Add monthly progress chart
+        if monthly_stats and any(data['points'] > 0 for data in monthly_stats.values()):
+            text += "📅 **Progresso mensile anno corrente:**\n"
+            month_names = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", 
+                          "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+            
+            # Create visual monthly chart
+            max_points = max((data['points'] for data in monthly_stats.values()), default=1)
+            for month in range(1, 13):
+                month_data = monthly_stats[month]
+                if month_data['points'] > 0:
+                    bar_length = min(10, max(1, int(month_data['points'] * 10 / max_points)))
+                    bar = "█" * bar_length + "░" * (10 - bar_length)
+                    text += f"`{month_names[month-1]} {bar}` {month_data['points']}pt ({month_data['tasks']})\n"
+                else:
+                    text += f"`{month_names[month-1]} ░░░░░░░░░░` 0pt (0)\n"
+            text += "\n"
+        
+        # Add top completed tasks with enhanced formatting
         if task_completion_stats:
-            text += "\n\n🎯 **Task completate per tipo:**\n"
-            for task_stat in task_completion_stats:
+            text += "🎯 **Top task completate:**\n"
+            top_tasks = task_completion_stats[:5]  # Show top 5
+            for i, task_stat in enumerate(top_tasks, 1):
                 count_text = "volta" if task_stat['completion_count'] == 1 else "volte"
-                text += f"• **{task_stat['task_name']}**: completata {task_stat['completion_count']} {count_text}\n"
+                if i == 1:
+                    emoji = "🥇"
+                elif i == 2:
+                    emoji = "🥈"
+                elif i == 3:
+                    emoji = "🥉"
+                else:
+                    emoji = f"{i}°"
+                text += f"{emoji} **{task_stat['task_name']}** • {task_stat['completion_count']} {count_text}\n"
         
         await send_and_track_message(update.message.reply_text, text, parse_mode=ParseMode.MARKDOWN)
 
@@ -238,8 +291,8 @@ class FamilyTaskBot:
             "📋 **Scegli una categoria di task:**\n\n"
             f"📊 **Stato attuale:**\n"
             f"• 📦 Task totali: {total_tasks}\n"
-            f"• ✅ Assegnazioni totali: {assigned_tasks}\n"
-            f"• 🆓 Tutte le task sono sempre disponibili per nuove assegnazioni\n\n"
+            f"• ✅ Completamenti totali: {assigned_tasks}\n"
+            f"• ⚡ Tutte le task sono sempre disponibili per completamento immediato\n\n"
             "👇 Seleziona una categoria per vedere le task disponibili:"
         )
         
@@ -268,7 +321,7 @@ class FamilyTaskBot:
             
             if total_in_cat > 0:
                 if assigned_in_cat > 0:
-                    status = f"({assigned_in_cat} assegnaz.)"
+                    status = f"({assigned_in_cat} completate)"
                 else:
                     status = f"({total_in_cat} disponibili)"
             else:
@@ -363,6 +416,88 @@ class FamilyTaskBot:
         user_id = query.from_user.id
         if data == "main_menu":
             await query.edit_message_text("Menu principale. Usa i comandi o il menu.")
+        elif data.startswith("complete_immediate_"):
+            task_id = data.replace("complete_immediate_", "")
+            user_id = query.from_user.id
+            chat_id = query.message.chat.id
+            
+            # Get task details before completion
+            task = self.get_db().get_task_by_id(task_id)
+            if not task:
+                await query.edit_message_text("❌ Task non trovata!")
+                return
+                
+            try:
+                # Show confirmation first
+                keyboard = [
+                    [InlineKeyboardButton("✅ Sì, completa subito!", callback_data=f"confirm_immediate_{task_id}")],
+                    [InlineKeyboardButton("❌ Annulla", callback_data="cancel_complete")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                text = (
+                    f"⚡ **Completamento immediato**\n\n"
+                    f"📋 **Task:** {task['name']}\n"
+                    f"⭐ **Punti da guadagnare:** {task['points']}\n"
+                    f"⏱️ **Tempo stimato:** ~{task['time_minutes']} minuti\n\n"
+                    "🚀 Questa task verrà automaticamente assegnata a te e completata subito!\n"
+                    "Sei sicuro di aver completato questa attività?"
+                )
+                
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+                
+            except Exception as exc:
+                await query.edit_message_text(f"❌ Errore nel caricamento task: {exc}")
+        
+        elif data.startswith("confirm_immediate_"):
+            task_id = data.replace("confirm_immediate_", "")
+            user_id = query.from_user.id
+            chat_id = query.message.chat.id
+            
+            try:
+                task = self.get_db().get_task_by_id(task_id)
+                ok = self.get_db().complete_task_immediately(chat_id, task_id, user_id)
+                
+                if ok:
+                    # Get updated user stats
+                    user_stats = self.get_db().get_user_stats(user_id)
+                    current_month_stats = self.get_db().get_current_month_stats(user_id)
+                    level_up = False
+                    
+                    # Check if user leveled up
+                    new_level = 1 + (user_stats['total_points'] // 50) if user_stats else 1
+                    old_points = user_stats['total_points'] - task['points'] if user_stats else 0
+                    old_level = 1 + (old_points // 50)
+                    level_up = new_level > old_level
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("🎯 Completa Altra Task", callback_data="tasks_menu")],
+                        [InlineKeyboardButton("📊 Vedi Statistiche", callback_data="show_stats")],
+                        [InlineKeyboardButton("🏆 Classifica", callback_data="show_leaderboard")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    celebration = "🎉🎊🌟" if level_up else "🎉⭐"
+                    level_msg = f"\n🆙 **LIVELLO AUMENTATO!** Ora sei livello {new_level}! 🚀" if level_up else ""
+                    
+                    success_text = (
+                        f"{celebration} **Task Completata Immediatamente!**\n\n"
+                        f"📋 **{task['name']}**\n"
+                        f"⭐ **Punti guadagnati:** +{task['points']}\n"
+                        f"📊 **Punti totali:** {user_stats['total_points'] if user_stats else task['points']}\n"
+                        f"🏅 **Livello attuale:** {new_level}{level_msg}\n\n"
+                        f"🗓️ **Progresso mensile:**\n"
+                        f"⭐ {current_month_stats['points']} punti questo mese\n"
+                        f"✅ {current_month_stats['tasks']} task completate\n\n"
+                        f"🚀 La task è stata automaticamente assegnata e completata!\n"
+                        f"Continua così per scalare la classifica! 💪"
+                    )
+                    
+                    await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+                else:
+                    await query.edit_message_text("❌ Errore nel completamento della task.")
+            except Exception as exc:
+                await query.edit_message_text(f"❌ Errore nel completamento: {exc}")
         elif data.startswith("assign_"):
             task_id = data.replace("assign_", "")
             members = self.get_db().get_family_members(chat_id)
@@ -697,11 +832,11 @@ class FamilyTaskBot:
                 f"📝 {cat_description}\n\n"
                 f"📊 **Statistiche categoria:**\n"
                 f"• 📦 Task totali: {len(filtered)}\n"
-                f"• ✅ Assegnazioni attive: {total_assignments_in_cat}\n"
+                f"• ✅ Completamenti oggi: {total_assignments_in_cat}\n"
                 f"• ⭐ Punti totali disponibili: {total_points}\n"
                 f"• ⏱️ Tempo medio: ~{avg_time} min\n\n"
-                "👇 **Scegli una task da assegnare:**\n"
-                "💡 *Ogni task può essere assegnata a più persone*\n"
+                "👇 **Scegli una task da completare:**\n"
+                "⚡ *Ogni task viene automaticamente assegnata e completata subito*\n"
             )
             
             keyboard = []
@@ -718,17 +853,17 @@ class FamilyTaskBot:
                 else:
                     difficulty = "🔴"  # Hard
                 
-                # Show assignment count instead of blocking assignment
+                # Show assignment count for information only
                 assignment_count = len([a for a in assigned if a['task_id'] == t['id']])
                 if assignment_count > 0:
-                    status = f"({assignment_count} assegnaz.)"
+                    status = f"({assignment_count} completate oggi)"
                 else:
                     status = ""
                 
-                # Always allow assignment - tasks can be assigned to multiple users
+                # Always allow task completion - changed from assign to complete_immediate
                 keyboard.append([InlineKeyboardButton(
                     f"{difficulty} {t['name'][:20]}{'...' if len(t['name']) > 20 else ''} ({t['points']}pt) {status}", 
-                    callback_data=f"assign_{t['id']}"
+                    callback_data=f"complete_immediate_{t['id']}"
                 )])
             
             keyboard.append([InlineKeyboardButton("🔙 Tutte le Categorie", callback_data="tasks_menu")])
@@ -744,8 +879,8 @@ class FamilyTaskBot:
                 "📋 **Scegli una categoria di task:**\n\n"
                 f"📊 **Stato attuale:**\n"
                 f"• 📦 Task totali: {total_tasks}\n"
-                f"• ✅ Assegnazioni totali: {assigned_tasks}\n"
-                f"• 🆓 Tutte le task sono sempre disponibili per nuove assegnazioni\n\n"
+                f"• ✅ Completamenti totali: {assigned_tasks}\n"
+                f"• ⚡ Tutte le task sono sempre disponibili per completamento immediato\n\n"
                 "👇 Seleziona una categoria per vedere le task disponibili:"
             )
             
@@ -774,7 +909,7 @@ class FamilyTaskBot:
                 
                 if total_in_cat > 0:
                     if assigned_in_cat > 0:
-                        status = f"({assigned_in_cat} assegnaz.)"
+                        status = f"({assigned_in_cat} completate)"
                     else:
                         status = f"({total_in_cat} disponibili)"
                 else:

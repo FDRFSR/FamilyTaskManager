@@ -62,3 +62,14 @@ CREATE TABLE IF NOT EXISTS badges (
     earned_date TIMESTAMP DEFAULT NOW(),
     UNIQUE(user_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS monthly_stats (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    year INTEGER,
+    month INTEGER,
+    points_earned INTEGER DEFAULT 0,
+    tasks_completed INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(user_id, year, month)
+);

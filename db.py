@@ -4,6 +4,7 @@ import os
 import psycopg2
 import psycopg2.extras
 from contextlib import contextmanager
+import calendar
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,47 @@ class FamilyTaskDB:
             logger.error(f"Errore in get_user_assigned_tasks: {e}")
             return []
 
+    def complete_task_immediately(self, chat_id, task_id, user_id):
+        """Complete a task immediately (auto-assign and complete in one step)"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                
+                # Get task details for points
+                task = self.get_task_by_id(task_id)
+                if not task:
+                    return False
+                
+                # Insert directly into completed_tasks without going through assigned_tasks
+                cur.execute("""
+                    INSERT INTO completed_tasks (chat_id, task_id, assigned_to, assigned_by, assigned_date, completed_date, points_earned)
+                    VALUES (%s, %s, %s, %s, NOW(), NOW(), %s);
+                """, (chat_id, task_id, user_id, user_id, task['points']))
+                
+                # Update monthly statistics
+                self._update_monthly_stats(user_id, task['points'], cur)
+                
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Errore in complete_task_immediately: {e}")
+            return False
+
+    def _update_monthly_stats(self, user_id, points, cursor):
+        """Update monthly statistics for a user"""
+        now = datetime.now()
+        current_year = now.year
+        current_month = now.month
+        
+        cursor.execute("""
+            INSERT INTO monthly_stats (user_id, year, month, points_earned, tasks_completed)
+            VALUES (%s, %s, %s, %s, 1)
+            ON CONFLICT (user_id, year, month)
+            DO UPDATE SET 
+                points_earned = monthly_stats.points_earned + %s,
+                tasks_completed = monthly_stats.tasks_completed + 1;
+        """, (user_id, current_year, current_month, points, points))
+
     def complete_task(self, chat_id, task_id, user_id):
         try:
             with self.get_db_connection() as conn:
@@ -183,6 +225,12 @@ class FamilyTaskDB:
                     FROM assigned_tasks
                     WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
                 """, (chat_id, task_id, user_id))
+                
+                # Get points for monthly stats update
+                task = self.get_task_by_id(task_id)
+                if task:
+                    self._update_monthly_stats(user_id, task['points'], cur)
+                
                 # Elimina la riga da assigned_tasks (così può essere riassegnata)
                 cur.execute("""
                     DELETE FROM assigned_tasks WHERE chat_id = %s AND task_id = %s AND assigned_to = %s AND status = 'completed';
@@ -306,3 +354,68 @@ class FamilyTaskDB:
         except Exception as e:
             logger.error(f"Errore in get_assigned_tasks_for_chat: {e}")
             return []
+
+    def get_monthly_stats(self, user_id):
+        """Get monthly statistics for a user for the current year"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                current_year = datetime.now().year
+                cur.execute("""
+                    SELECT month, points_earned, tasks_completed
+                    FROM monthly_stats
+                    WHERE user_id = %s AND year = %s
+                    ORDER BY month;
+                """, (user_id, current_year))
+                rows = cur.fetchall()
+                
+                # Fill missing months with zeros
+                monthly_data = {}
+                for month in range(1, 13):
+                    monthly_data[month] = {'points': 0, 'tasks': 0}
+                
+                for row in rows:
+                    month, points, tasks = row
+                    monthly_data[month] = {'points': points, 'tasks': tasks}
+                
+                return monthly_data
+        except Exception as e:
+            logger.error(f"Errore in get_monthly_stats: {e}")
+            return {}
+
+    def get_current_month_stats(self, user_id):
+        """Get current month statistics for a user"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                now = datetime.now()
+                current_year = now.year
+                current_month = now.month
+                
+                cur.execute("""
+                    SELECT points_earned, tasks_completed
+                    FROM monthly_stats
+                    WHERE user_id = %s AND year = %s AND month = %s;
+                """, (user_id, current_year, current_month))
+                row = cur.fetchone()
+                
+                if row:
+                    return {'points': row[0], 'tasks': row[1]}
+                else:
+                    return {'points': 0, 'tasks': 0}
+        except Exception as e:
+            logger.error(f"Errore in get_current_month_stats: {e}")
+            return {'points': 0, 'tasks': 0}
+
+    def reset_monthly_stats(self):
+        """Reset monthly stats (called at the beginning of each month)"""
+        try:
+            with self.get_db_connection() as conn:
+                cur = conn.cursor()
+                # The monthly stats are kept for historical purposes
+                # This method can be used for future cleanup if needed
+                logger.info("Monthly stats structure maintained for historical tracking")
+                return True
+        except Exception as e:
+            logger.error(f"Errore in reset_monthly_stats: {e}")
+            return False
