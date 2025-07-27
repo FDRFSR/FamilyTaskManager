@@ -303,7 +303,8 @@ class FamilyTaskBot:
         
     def _categorize_tasks_efficiently(self, tasks):
         """Categorize all tasks at once to avoid repeated processing"""
-        categorized = {cat[0].lower(): [] for cat, _, _ in self.CATEGORIES}
+        # Create dict with full category names in lowercase
+        categorized = {cat.lower(): [] for cat, _, _ in self.CATEGORIES}
         
         priority_categories = ["animali", "cucina", "spesa", "pulizie", "bucato", "giardino", "auto", "casa"]
         
@@ -318,7 +319,7 @@ class FamilyTaskBot:
                     break
             
             # If no category matched, it goes to "altro"
-            if assigned_category:
+            if assigned_category and assigned_category in categorized:
                 categorized[assigned_category].append(task)
             else:
                 categorized["altro"].append(task)

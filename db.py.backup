@@ -81,82 +81,65 @@ class FamilyTaskDB:
             ("organizzare_dispensa", "Organizzare la dispensa", 10, 25)
         ]
 
-    def _get_default_tasks(self):
-        """Get the list of default tasks as fallback when database is unavailable"""
-        return [
-            ("cucina_pulizia", "Pulizia cucina", 10, 20),
-            ("bagno_pulizia", "Pulizia bagno", 12, 25),
-            ("spazzatura", "Portare fuori la spazzatura", 5, 5),
-            ("bucato", "Fare il bucato", 8, 15),
-            ("giardino", "Cura del giardino", 15, 30),
-            ("spesa", "Fare la spesa", 7, 20),
-            ("cena", "Preparare la cena", 10, 25),
-            ("camera", "Riordinare la camera", 6, 10),
-            ("animali", "Dare da mangiare agli animali", 4, 5),
-            ("auto", "Lavare l'auto", 13, 30),
-            ("lavastoviglie", "Caricare lavastoviglie", 6, 8),
-            ("stendere_bucato", "Stendere il bucato", 6, 10),
-            ("aspirapolvere", "Passare l'aspirapolvere", 8, 15),
-            ("svuotare_lavastoviglie", "Svuotare la lavastoviglie", 5, 5),
-            ("riordinare_soggiorno", "Riordinare il soggiorno", 6, 10),
-            ("buttare_rifiuti", "Buttare la carta/vetro/plastica", 5, 5),
-            ("fare_letti", "Fare i letti", 4, 5),
-            ("preparare_tavola", "Preparare la tavola", 4, 5),
-            ("sparecchiare_tavola", "Sparecchiare la tavola", 4, 5),
-            ("lettiera_gatto", "Pulire la lettiera del gatto", 6, 8),
-            ("pulire_garage", "Pulire il garage", 15, 30),
-            ("pulire_finestre", "Pulire le finestre", 10, 20),
-            ("organizzare_armadi", "Organizzare gli armadi", 12, 25),
-            ("pulire_frigorifero", "Pulire il frigorifero", 8, 15),
-            ("innaffiare_piante", "Innaffiare le piante", 3, 5),
-            ("pulire_specchi", "Pulire gli specchi", 5, 10),
-            ("cambiare_lenzuola", "Cambiare le lenzuola", 7, 15),
-            ("pulire_forno", "Pulire il forno", 12, 25),
-            ("raccogliere_foglie", "Raccogliere le foglie", 8, 20),
-            ("pulire_balcone", "Pulire il balcone", 6, 15),
-            ("organizzare_cantina", "Organizzare la cantina", 15, 40),
-            ("pulire_scarpe", "Pulire le scarpe", 4, 10),
-            ("spolverare_mobili", "Spolverare i mobili", 6, 15),
-            ("pulire_elettrodomestici", "Pulire gli elettrodomestici", 10, 20),
-            ("riordinare_scrivania", "Riordinare la scrivania", 5, 10),
-            ("pulire_tappeti", "Pulire i tappeti", 9, 20),
-            ("organizzare_garage", "Organizzare il garage", 18, 45),
-            ("pulire_scale", "Pulire le scale", 7, 15),
-            ("cambiare_filtri", "Cambiare i filtri dell'aria", 8, 20),
-            ("pulire_ventilatori", "Pulire i ventilatori", 6, 15),
-            ("organizzare_dispensa", "Organizzare la dispensa", 10, 25)
-        ]
-
     def _load_tasks_from_db(self):
-        """Load tasks from database with fallback to in-memory defaults"""
-        default_tasks = self._get_default_tasks()
-        
-        try:
-            with self.get_db_connection() as conn:
-                cur = conn.cursor()
-                # Task di default sempre sincronizzate
-                for t in default_tasks:
-                    cur.execute(
-                        "INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING;",
-                        t
-                    )
-                conn.commit()
-                cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
-                rows = cur.fetchall()
-                
-                self._tasks = [
-                    {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
-                    for row in rows
-                ]
-                logger.info(f"Successfully loaded {len(self._tasks)} tasks from database")
-        except Exception as e:
-            logger.warning(f"Database connection failed, using fallback tasks: {e}")
-            # Use in-memory fallback tasks when database is unavailable
-            self._tasks = [
-                {"id": t[0], "name": t[1], "points": t[2], "time_minutes": t[3]}
-                for t in default_tasks
+        with self.get_db_connection() as conn:
+            cur = conn.cursor()
+            # Task di default sempre sincronizzate
+            default_tasks = [
+                ("cucina_pulizia", "Pulizia cucina", 10, 20),
+                ("bagno_pulizia", "Pulizia bagno", 12, 25),
+                ("spazzatura", "Portare fuori la spazzatura", 5, 5),
+                ("bucato", "Fare il bucato", 8, 15),
+                ("giardino", "Cura del giardino", 15, 30),
+                ("spesa", "Fare la spesa", 7, 20),
+                ("cena", "Preparare la cena", 10, 25),
+                ("camera", "Riordinare la camera", 6, 10),
+                ("animali", "Dare da mangiare agli animali", 4, 5),
+                ("auto", "Lavare l'auto", 13, 30),
+                ("lavastoviglie", "Caricare lavastoviglie", 6, 8),
+                ("stendere_bucato", "Stendere il bucato", 6, 10),
+                ("aspirapolvere", "Passare l’aspirapolvere", 8, 15),
+                ("svuotare_lavastoviglie", "Svuotare la lavastoviglie", 5, 5),
+                ("riordinare_soggiorno", "Riordinare il soggiorno", 6, 10),
+                ("buttare_rifiuti", "Buttare la carta/vetro/plastica", 5, 5),
+                ("fare_letti", "Fare i letti", 4, 5),
+                ("preparare_tavola", "Preparare la tavola", 4, 5),
+                ("sparecchiare_tavola", "Sparecchiare la tavola", 4, 5),
+                ("lettiera_gatto", "Pulire la lettiera del gatto", 6, 8),
+                ("pulire_garage", "Pulire il garage", 15, 30),
+                ("pulire_finestre", "Pulire le finestre", 10, 20),
+                ("organizzare_armadi", "Organizzare gli armadi", 12, 25),
+                ("pulire_frigorifero", "Pulire il frigorifero", 8, 15),
+                ("innaffiare_piante", "Innaffiare le piante", 3, 5),
+                ("pulire_specchi", "Pulire gli specchi", 5, 10),
+                ("cambiare_lenzuola", "Cambiare le lenzuola", 7, 15),
+                ("pulire_forno", "Pulire il forno", 12, 25),
+                ("raccogliere_foglie", "Raccogliere le foglie", 8, 20),
+                ("pulire_balcone", "Pulire il balcone", 6, 15),
+                ("organizzare_cantina", "Organizzare la cantina", 15, 40),
+                ("pulire_scarpe", "Pulire le scarpe", 4, 10),
+                ("spolverare_mobili", "Spolverare i mobili", 6, 15),
+                ("pulire_elettrodomestici", "Pulire gli elettrodomestici", 10, 20),
+                ("riordinare_scrivania", "Riordinare la scrivania", 5, 10),
+                ("pulire_tappeti", "Pulire i tappeti", 9, 20),
+                ("organizzare_garage", "Organizzare il garage", 18, 45),
+                ("pulire_scale", "Pulire le scale", 7, 15),
+                ("cambiare_filtri", "Cambiare i filtri dell'aria", 8, 20),
+                ("pulire_ventilatori", "Pulire i ventilatori", 6, 15),
+                ("organizzare_dispensa", "Organizzare la dispensa", 10, 25)
             ]
-            logger.info(f"Loaded {len(self._tasks)} fallback tasks in memory")
+            for t in default_tasks:
+                cur.execute(
+                    "INSERT INTO tasks (id, name, points, time_minutes) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO NOTHING;",
+                    t
+                )
+            conn.commit()
+            cur.execute("SELECT id, name, points, time_minutes FROM tasks;")
+            rows = cur.fetchall()
+        self._tasks = [
+            {"id": row[0], "name": row[1], "points": row[2], "time_minutes": row[3]}
+            for row in rows
+        ]
 
     def add_family_member(self, chat_id, user_id, username, first_name):
         """Add a family member with improved error handling and logging"""
