@@ -410,6 +410,10 @@ class FamilyTaskBot:
         data = query.data
         chat_id = query.message.chat.id
         user_id = query.from_user.id
+        
+        # Always answer the callback query first to acknowledge button press
+        await query.answer()
+        
         if data == "main_menu":
             await query.edit_message_text("Menu principale. Usa i comandi o il menu.")
         elif data.startswith("assign_"):
@@ -885,7 +889,8 @@ class FamilyTaskBot:
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         else:
-            await query.answer("Funzione non ancora implementata.")
+            # For unhandled callback data, just acknowledge without changing the message
+            pass
 
     async def handle_message(self, update, context):
         """Handle text messages with improved input validation and error handling"""
