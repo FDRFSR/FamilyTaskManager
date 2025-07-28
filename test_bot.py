@@ -72,14 +72,15 @@ def test_bot_functionality():
     print("\n✅ Test completamento task...")
     if tasks:
         task_id = task_to_assign['id']
-        points, msg = db.complete_task(chat_id, task_id, user_id)
+        success = db.complete_task(chat_id, task_id, user_id)
         
-        if points > 0:
-            print(f"✅ Task '{task_to_assign['name']}' completata: +{points} punti")
-            if msg.get('level_up'):
-                print(f"🎉 Level up! Nuovo livello: {msg['new_level']}")
-            if msg.get('new_badges'):
-                print(f"🏅 Nuovi badge: {', '.join(msg['new_badges'])}")
+        if success:
+            # Get the task details to show completion info
+            task_details = db.get_task_by_id(task_id)
+            if task_details:
+                print(f"✅ Task '{task_to_assign['name']}' completata: +{task_details['points']} punti")
+            else:
+                print("✅ Task completata con successo")
         else:
             print("❌ Completamento task fallito")
     

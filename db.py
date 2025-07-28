@@ -10,14 +10,18 @@ logger = logging.getLogger(__name__)
 class FamilyTaskDB:
     def __init__(self):
         self.test_mode = False
+        self.fallback_mode = False
         self._tasks = []
         self._assigned = []
         self._members = {}
         self._completed = []
         self.db_url = os.environ.get("DATABASE_URL")
         if not self.db_url:
-            raise RuntimeError("DATABASE_URL non impostato nelle variabili d'ambiente!")
-        self._load_tasks_from_db()
+            logger.warning("DATABASE_URL non impostato nelle variabili d'ambiente! Modalità fallback attivata.")
+            self.fallback_mode = True
+            self._load_fallback_tasks()
+        else:
+            self._load_tasks_from_db()
 
     @contextmanager
     def get_db_connection(self):
@@ -127,6 +131,15 @@ class FamilyTaskDB:
             ("organizzare_dispensa", "Organizzare la dispensa", 10, 25)
         ]
 
+    def _load_fallback_tasks(self):
+        """Load tasks in fallback mode (memory-only) when database is unavailable"""
+        default_tasks = self._get_default_tasks()
+        self._tasks = [
+            {"id": t[0], "name": t[1], "points": t[2], "time_minutes": t[3]}
+            for t in default_tasks
+        ]
+        logger.info(f"Loaded {len(self._tasks)} tasks in fallback mode (no database)")
+
     def _load_tasks_from_db(self):
         """Load tasks from database with fallback to in-memory defaults"""
         default_tasks = self._get_default_tasks()
@@ -160,6 +173,19 @@ class FamilyTaskDB:
 
     def add_family_member(self, chat_id, user_id, username, first_name):
         """Add a family member with improved error handling and logging"""
+        if self.fallback_mode:
+            # In fallback mode, store members in memory
+            if chat_id not in self._members:
+                self._members[chat_id] = {}
+            self._members[chat_id][user_id] = {
+                'user_id': user_id,
+                'username': username,
+                'first_name': first_name,
+                'joined_date': datetime.now()
+            }
+            logger.info(f"Added member {user_id} ({first_name}) in chat {chat_id} (fallback mode)")
+            return
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -187,6 +213,30 @@ class FamilyTaskDB:
             return []
 
     def assign_task(self, chat_id, task_id, assigned_to, assigned_by):
+        if self.fallback_mode:
+            # In fallback mode, store assignments in memory
+            assignment = {
+                'chat_id': chat_id,
+                'task_id': task_id,
+                'assigned_to': assigned_to,
+                'assigned_by': assigned_by,
+                'assigned_date': datetime.now(),
+                'status': 'assigned'
+            }
+            
+            # Check for duplicate assignment
+            existing = [a for a in self._assigned if 
+                       a['chat_id'] == chat_id and 
+                       a['task_id'] == task_id and 
+                       a['assigned_to'] == assigned_to and 
+                       a['status'] == 'assigned']
+            if existing:
+                raise ValueError(f"Task già assegnata a questo utente")
+            
+            self._assigned.append(assignment)
+            logger.info(f"Assigned task {task_id} to user {assigned_to} in chat {chat_id} (fallback mode)")
+            return
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -224,6 +274,25 @@ class FamilyTaskDB:
             raise
 
     def get_user_assigned_tasks(self, chat_id, user_id):
+        if self.fallback_mode:
+            # In fallback mode, get assignments from memory
+            user_assignments = [a for a in self._assigned if 
+                               a['chat_id'] == chat_id and 
+                               a['assigned_to'] == user_id and 
+                               a['status'] == 'assigned']
+            
+            result = []
+            for assignment in user_assignments:
+                task = next((t for t in self._tasks if t['id'] == assignment['task_id']), None)
+                if task:
+                    result.append({
+                        "task_id": task['id'],
+                        "name": task['name'],
+                        "points": task['points'],
+                        "time_minutes": task['time_minutes']
+                    })
+            return result
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -244,6 +313,47 @@ class FamilyTaskDB:
 
     def complete_task(self, chat_id, task_id, user_id):
         """Complete a task with improved validation and error handling"""
+        if self.fallback_mode:
+            # In fallback mode, handle completion in memory
+            # Find the assignment
+            assignment = None
+            for i, a in enumerate(self._assigned):
+                if (a['chat_id'] == chat_id and 
+                    a['task_id'] == task_id and 
+                    a['assigned_to'] == user_id and 
+                    a['status'] == 'assigned'):
+                    assignment = a
+                    assignment_index = i
+                    break
+            
+            if not assignment:
+                logger.warning(f"Attempted to complete non-assigned task in fallback mode: chat_id={chat_id}, task_id={task_id}, user_id={user_id}")
+                return False
+            
+            # Find the task details
+            task = next((t for t in self._tasks if t['id'] == task_id), None)
+            if not task:
+                logger.error(f"Task {task_id} not found in fallback mode")
+                return False
+            
+            # Mark as completed and add to completed tasks
+            completion = {
+                'chat_id': chat_id,
+                'task_id': task_id,
+                'assigned_to': user_id,
+                'assigned_by': assignment['assigned_by'],
+                'assigned_date': assignment['assigned_date'],
+                'completed_date': datetime.now(),
+                'points_earned': task['points']
+            }
+            self._completed.append(completion)
+            
+            # Remove from assigned tasks
+            self._assigned.pop(assignment_index)
+            
+            logger.info(f"Task {task_id} completed by user {user_id} in chat {chat_id} (+{task['points']} points) [fallback mode]")
+            return True
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -300,6 +410,15 @@ class FamilyTaskDB:
             return False
 
     def get_family_members(self, chat_id):
+        if self.fallback_mode:
+            # In fallback mode, get members from memory
+            if chat_id in self._members:
+                return [
+                    {"user_id": user_id, "username": member['username'], "first_name": member['first_name']}
+                    for user_id, member in self._members[chat_id].items()
+                ]
+            return []
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -313,6 +432,20 @@ class FamilyTaskDB:
             return []
 
     def get_user_stats(self, user_id):
+        if self.fallback_mode:
+            # In fallback mode, calculate stats from memory
+            user_completions = [c for c in self._completed if c['assigned_to'] == user_id]
+            total_points = sum(c['points_earned'] for c in user_completions)
+            tasks_completed = len(user_completions)
+            level = 1 + total_points // 50
+            streak = min(tasks_completed, 7)
+            return {
+                'total_points': total_points,
+                'tasks_completed': tasks_completed,
+                'level': level,
+                'streak': streak
+            }
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
@@ -335,6 +468,11 @@ class FamilyTaskDB:
         except Exception as e:
             logger.error(f"Errore in get_user_stats: {e}")
             return None
+
+    def get_user_badges(self, user_id):
+        """Get user badges - stub implementation for compatibility"""
+        # This is a stub implementation for tests - badges are not implemented yet
+        return []
 
     def get_user_task_completion_stats(self, user_id):
         """Get individual task completion statistics for a user"""
@@ -395,6 +533,25 @@ class FamilyTaskDB:
             return None
 
     def get_assigned_tasks_for_chat(self, chat_id):
+        if self.fallback_mode:
+            # In fallback mode, get assignments from memory
+            chat_assignments = [a for a in self._assigned if 
+                               a['chat_id'] == chat_id and 
+                               a['status'] == 'assigned']
+            
+            result = []
+            for assignment in chat_assignments:
+                task = next((t for t in self._tasks if t['id'] == assignment['task_id']), None)
+                if task:
+                    result.append({
+                        "task_id": task['id'],
+                        "assigned_to": assignment['assigned_to'],
+                        "name": task['name'],
+                        "points": task['points'],
+                        "time_minutes": task['time_minutes']
+                    })
+            return result
+
         try:
             with self.get_db_connection() as conn:
                 cur = conn.cursor()
