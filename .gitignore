@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 *.log
 reset_db.py
+dns_diagnostic.py
+validate_dns_fix.py
